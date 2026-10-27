@@ -1,0 +1,154 @@
+===============================================================================
+ WATCHALL - EXTRACTOR FAILURE ANALYSIS & FIX (MP4 FALLBACK DETECTION)
+ Date: 26 Oct 2026
+ Scope: server/index.js (/api/extract) + src/Pages/VideoPlayer.jsx
+===============================================================================
+
+1. PROBLEM
+----------
+For certain TMDB movie IDs (observed: 1375156 "Udta Teer", 1389172
+"Reporting Live"), the extractor returned:
+
+    404 { error: "No stream URL found. The movie may not be available." }
+
+Logs showed the Viduki page loading fine (multiple times), but ZERO network
+requests containing ".m3u8" were ever captured - no matter how long the
+extractor waited. Most other movies worked normally.
+
+2. ROOT CAUSE (verified by live headless-Chromium network capture)
+-----------------------------------------------------------------
+Viduki's server-1 player calls its API for EACH of its named servers, in
+sequence:
+
+    https://api.viduki.net/main/movie/<tmdb>?srv=Leon
+    https://api.viduki.net/main/movie/<tmdb>?srv=Jill
+    https://api.viduki.net/main/movie/<tmdb>?srv=Ada
+    https://api.viduki.net/main/movie/<tmdb>?srv=Claire
+    https://api.viduki.net/main/movie/<tmdb>?srv=Sherry
+
+  srv=Leon / Jill / Ada / Claire  -> HLS servers   (CDN returns .m3u8 playlists)
+  srv=Sherry                      -> progressive MP4 server (signed CDN URL)
+
+FINDINGS:
+
+* Working movies (e.g. TMDB 27205 "Inception"):
+    srv=Leon -> HTTP 200 -> HLS CDN URL -> player loads the
+    "vidstack-hls" provider -> .m3u8 sub-playlist requests fire ->
+    old ".includes('.m3u8')" matcher succeeds.
+
+* Failing movies (1375156, 1389172):
+    srv=Leon, Jill, Ada, Claire -> ALL return HTTP 404.
+    (The title simply has NO HLS encode on Viduki's API.)
+    srv=Sherry -> HTTP 200 -> a signed progressive MP4:
+        https://macdn.hakunaymatata.com/resource/.....mp4?Expires=...&Signature=...&Key-Pair-Id=...
+    The player then loads the "vidstack-video" (NATIVE video) provider
+    instead of "vidstack-hls", and feeds the MP4 straight into <video>.
+
+    => NO .m3u8 request will EVER fire for these titles.
+       It was never a timeout, bot-detection, or "page loads again" issue -
+       it is a STREAM FORMAT difference. The old boolean check
+       (`url.includes(".m3u8")`) structurally could never see it.
+
+Supporting evidence from the network capture (failing IDs):
+    - by-extension: {"mp4": 1-2, "vtt": 1, ...}  m3u8: 0
+    - 4x "404" console errors (the srv=Leon/Jill/Ada/Claire API calls)
+    - <video> element src = the signed MP4 CDN URL
+    - vidstack-video-DxDRhpTK.js loaded (native provider),
+      vidstack-hls-*.js NOT loaded
+
+3. HOW IT WAS DIAGNOSED
+-----------------------
+A standalone Puppeteer script (same stealth setup as the server, later
+deleted) loaded each page and recorded:
+    - every request {url, method, resourceType}
+    - every response {url -> status, content-type}
+    - requestfailed events, console errors, iframes, <video> elements,
+      page body text, request counts grouped by extension/host
+
+The key diagnostic question: "What did api.viduki.net/main/* return?"
+    -> control:  '?srv=Leon' = 200
+    -> failures: Leon/Jill/Ada/Claire = 404, Sherry = 200 (MP4)
+
+4. CHANGES MADE
+---------------
+
+A) server/index.js - /api/extract rewritten:
+
+  * Multi-format stream detection via TWO channels:
+      1) Extension-based on request events:
+           .m3u8  -> "hls"
+           .mpd   -> "dash"
+           .mp4 seen as resourceType "media"/"navigate" -> "mp4"
+             (Viduki's MP4 URLs are signed: .mp4?Expires=...&Signature=...)
+      2) Content-type-based on response events (robust for URL formats
+         without the extension):
+           content-type contains "mpegurl"   -> hls
+           content-type contains "dash+xml"  -> dash
+           content-type starts with "video/" AND url has .mp4 -> mp4
+
+  * MP4 is treated as a FALLBACK - HLS is preferred:
+      after detecting an MP4, keep listening 5 more seconds ("grace") in
+      case an HLS playlist appears later; return MP4 only if none does.
+      HLS/DASH are returned immediately when detected.
+
+  * Response payload changed to:
+      { streamUrl, type: "hls" | "dash" | "mp4" }
+
+  * On total failure, buildDiagnostics() summarizes what the page actually
+    did, logged to the server console AND returned in the 404 body:
+      - every api.viduki.net/main/... call with its HTTP status
+        (all 404s = the title has no playable source on Viduki)
+      - all media-ish URLs seen (m3u8/mpd/mp4/ts/m4s/vtt/key), up to 15
+      - all hosts contacted, console-error count, last 20 requests
+      - playerPresent flag
+
+  * Added page.on("requestfailed") and page.on("console"-error) capture
+    to feed the diagnostics ring buffer (capped at 600 entries).
+
+B) src/Pages/VideoPlayer.jsx - handles the new "type":
+
+  * type === "mp4":
+      video.src = streamUrl directly (native playback - no hls.js).
+      No CORS needed because <video> has no crossorigin attribute, and
+      the signed CDN supports HTTP Range requests (verified: 206).
+      Seeking works natively.
+  * type === "dash":
+      throws a clear "This stream uses DASH playback..." message
+      (hls.js cannot play DASH; dash.js would be needed - not installed).
+  * type === "hls": unchanged previous hls.js flow.
+
+  IMPORTANT: do NOT route MP4s through /api/proxy - the proxy buffers the
+  whole file in memory and has no Range support, so seeking would break.
+
+5. VERIFICATION (live run against Viduki)
+-----------------------------------------
+    GET /api/extract?tmdb=1375156&type=movie  -> 200 {type:"mp4"}  in ~20s
+    GET /api/extract?tmdb=1389172&type=movie  -> 200 {type:"mp4"}  in ~17s
+    GET /api/extract?tmdb=27205&type=movie    -> 200 {type:"hls"} in ~11s
+       (hls URL ends with /index.m3u8, as before)
+
+    node --check server/index.js -> OK
+    Range probe on the MP4: HTTP 206, content-type video/mp4 (seeking OK)
+
+6. GOTCHA HIT DURING TESTING
+----------------------------
+An OLD server instance (old code) was still bound to port 3001
+(PID 'node server/index.js'), so the first test hit STALE code
+(its 404 had no "diagnostics" field - a quick tell that you're talking to
+the wrong process). It was killed and the new build started detached.
+
+Remember: if /api/extract responses look like the old format, check
+    Get-NetTCPConnection -LocalPort 3001 -State Listen
+and restart the running server before concluding the fix "doesn't work".
+
+7. FUTURE IDEAS (not implemented here)
+--------------------------------------
+- Re-extract every ~30 min for long sessions (already noted in README).
+- If DASH (.mpd) titles ever appear for real, add dash.js to the frontend.
+- Consider probing the Viduki API JSON (/main/movie/<id>?srv=...) directly
+  to skip Puppeteer for known-good titles - blocked for now by their
+  altcha bot-challenge, so Puppeteer remains the reliable path.
+
+===============================================================================
+END OF RECORD
+===============================================================================

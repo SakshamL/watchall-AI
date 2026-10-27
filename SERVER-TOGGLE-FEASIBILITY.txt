@@ -1,0 +1,111 @@
+===============================================================================
+ WATCHALL - SERVER TOGGLE IN UI: FEASIBILITY NOTES (NO IMPLEMENTATION YET)
+ Date: 26 Oct 2026
+ Related: EXTRACTOR-FIX-NOTES.txt (earlier MP4-fallback fix)
+===============================================================================
+
+1. THE IDEA
+-----------
+Add a server picker to OUR player UI (dropdown or buttons mirroring
+Viduki's server names - Leon / Jill / Ada / Claire / Sherry). The viewer
+selects a different server when a stream is missing or playing the WRONG
+movie, and the stream is re-extracted from that specific server.
+
+Verdict: YES - fully possible, and it is the most robust of the options
+considered, because the viewer's own eyes act as the validator
+(no automatic wrong-content detection needed, zero false positives).
+
+2. HOW IT WOULD WORK
+--------------------
+
+FRONTEND (small):
+  * Server picker on the player screen (dropdown/buttons: Server 1..N,
+    mirroring Viduki's names).
+  * Selecting one calls:  /api/extract?tmdb=<id>&srv=<name>
+    -> returns { streamUrl, type } - the exact payload shape the player
+       ALREADY handles after the earlier fix.
+  * On each switch the player must FULLY reset between streams:
+      - destroy the current hls.js instance
+      - clear video.src
+      - then feed the new stream
+    Important detail: consecutive switches may return DIFFERENT types
+    (HLS from one server, MP4 from another), so a plain "reload source"
+    is not enough.
+
+BACKEND (moderate):
+  * /api/extract accepts an optional "srv" param. When present, after
+    loading the page it does NOT just wait for the default server's
+    stream - it FORCES the target server.
+  * Two ways to force the target server (choose at implementation time):
+      Path 1 - CLICK THE SWITCHER IN VIDUKI'S PLAYER DOM
+        Puppeteer clicks the server-switch button exactly like a human,
+        then captures the resulting stream the same way we already do.
+        Needs: one diagnostic to find the DOM selector.
+        Risk: exposed to their UI markup changing over time.
+      Path 2 - CALL THEIR API FROM INSIDE THE PAGE CONTEXT
+        page.evaluate(() => fetch('/api-by-them.../movie/<id>?srv=<name>'))
+        - same origin, and inherits whatever auth context the page has
+          already established (their altcha / pepper-key handshake).
+        Then either read the stream URL straight out of the JSON, or
+        fetch the URL it points to.
+        Needs: one diagnostic to learn the JSON's exact structure and
+        any required headers.
+  * /api/servers endpoint: fetches their main/servers list through the
+    page (or hardcodes the five known names initially) so the UI can
+    render the real options.
+  * IMPORTANT for snappiness: a short-lived cache of
+      tmdb + type + srv  ->  streamUrl
+    so switching servers does not relaunch a fresh headless Chromium
+    every time (each raw extraction currently takes ~10-20s).
+
+EDGE CASES HANDLED NATURALLY:
+  * A server 404s for this title
+      -> backend reports "unavailable on this server"
+      -> UI can grey the option out or show a toast.
+  * Wrong-content movies
+      -> viewer just taps a different server, same as switching manually
+         on viduki.net today, but inside our app.
+
+3. WHERE THE WRONG-CONTENT PROBLEM COMES FROM (context recap)
+------------------------------------------------------------
+Viduki's player selects the FIRST server whose API answers 200 and
+trusts its per-server catalog mapping. Each server has an independent
+catalog/CDN path. When ~1 in 100 titles plays the wrong movie, it is
+stale/incorrect data on THAT server's catalog - the stream plays fine
+but is a different file. Switching servers works because it moves to a
+server whose data entry for that id is correct.
+
+Our extractor today has zero chance to detect this, since it grabs the
+first stream URL fetched and never reads the JSON bodies of
+  https://api.viduki.net/main/movie/<id>?srv=<name>
+(only URL hits were being watched - and the stream URLs are opaque
+hashed paths with no title info in them).
+
+4. HBEST-PRACTICE COMBINATION
+-----------------------------
+Option C (this server toggle) as the always-available manual escape hatch,
+optionally composable later with:
+  Option A - auto-rotate + verify title metadata from the srv API JSON
+             against the expected TMDB title.
+  Option B - auto-verify via stream duration fingerprint
+             (sum EXTINF for HLS / mvhd box duration for MP4) vs TMDB
+             runtime (±2 min), rotate on mismatch.
+The manual toggle doubles as the fallback UI if auto-detection misses.
+
+5. WHAT MUST BE DIAGNOSED BEFORE IMPLEMENTING
+---------------------------------------------
+1) Dump the JSON body of api.viduki.net/main/movie/<id>?srv=<name> on a
+   KNOWN-WRONG title:
+      - decides whether Option A's title check is possible
+      - decides Path 2 (direct API call from page context)
+      - may also expose a convenient duration field
+2) Find the server switcher's DOM selector (fallback for Path 1).
+3) Confirm whether the wrong-content bug can also hit the MP4 server
+   (Sherry), not just the HLS ones - affects test coverage only.
+
+Feasibility is NOT the block - one small diagnostic run answers both
+unknowns, then the toggle is a straightforward build.
+
+===============================================================================
+ STATUS: NOT IMPLEMENTED - analysis/feasibility only, per request.
+===============================================================================

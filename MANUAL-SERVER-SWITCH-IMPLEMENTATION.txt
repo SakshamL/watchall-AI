@@ -1,0 +1,313 @@
+================================================================================
+ WATCHALL - MANUAL SERVER SWITCH: IMPLEMENTATION NOTES
+ Date: 26 Oct 2026
+ Project: WatchAll (React + Vite frontend, Express + Puppeteer backend)
+ Main files: server/index.js, src/Pages/VideoPlayer.jsx, server/README.md
+================================================================================
+
+AT A GLANCE
+-----------
+Problem : The server picker on the watch page did not reliably switch servers.
+          The backend took ~35-40s and often failed because it tried to drive
+          Viduki's own Servers panel with keyboard/mouse automation.
+Fix     : Intercept the player's own API request and rewrite its "?srv="
+          parameter via the Chrome DevTools Protocol (CDP). The player then
+          loads the requested server itself.
+Result  : Cold switch ~9-10s, cached switch instant, HLS and MP4 both work,
+          unavailable servers fail cleanly in ~9s, and the old stream keeps
+          playing while an error is shown.
+
+--------------------------------------------------------------------------------
+STEP 1 - CONFIRM THE PROBLEM AND THE CONSTRAINTS
+--------------------------------------------------------------------------------
+Issue:
+  Some titles play the wrong film on Viduki's default server. The viewer needs
+  to switch to another server manually. The picker UI existed, but selecting a
+  server did not reliably change the stream.
+
+What was investigated:
+  - Viduki ignores a plain "?srv=Chris" URL parameter.
+  - No server preference is stored in localStorage.
+  - Calling https://api.viduki.net/main/movie/<id>?srv=<name> directly returns
+    an encrypted envelope (and a decoy without the player's nonce headers), so
+    the stream cannot be read from a direct API call.
+  - The only supported way to force a server is to make Viduki's own player
+    request that server, then capture the stream it loads.
+
+Decision:
+  Stop automating Viduki's UI panel. Drive the player's own API request instead.
+
+--------------------------------------------------------------------------------
+STEP 2 - REPLACE UI-PANEL AUTOMATION WITH CDP REQUEST REWRITING (CORE FIX)
+--------------------------------------------------------------------------------
+Issue:
+  The old backend opened Viduki's shadow-DOM Servers panel, focused a row and
+  pressed Enter. This was slow (~35-40s) and fragile:
+  - panel rows animate in from off-screen;
+  - duplicate synthetic clicks cancelled requests;
+  - panel state changed between attempts;
+  - there was no guarantee the captured stream came from the chosen server.
+
+What was done:
+  In server/index.js, when the request includes "srv=<name>":
+  1. Create a CDP session on the extraction page.
+  2. Enable Fetch interception for:
+       https://api.viduki.net/main/*
+     at the Request stage.
+  3. On every "Fetch.requestPaused" event, rewrite the srv value in the URL:
+       original.replace(/([?&]srv=)[^&]*/, `$1${forcedSrv}`)
+  4. Continue the request with Fetch.continueRequest.
+  5. Requests without an srv parameter pass through unchanged.
+
+  Interception is enabled BEFORE page.goto(), so the player's very first API
+  call is already rewritten.
+
+Important bug found and fixed:
+  The CDP event provides "request.url" as a PROPERTY, not a function.
+  Using request.url() threw "request.url is not a function"; the handler then
+  continued the original (unmodified) request, so the default server stream
+  was returned. Changed to request.url.
+
+Why CDP and not page.setRequestInterception:
+  The stealth Puppeteer plugin conflicts with Puppeteer's request interception.
+  CDP Fetch interception works alongside it.
+
+--------------------------------------------------------------------------------
+STEP 3 - FORCED-SERVER RESULT HANDLING
+--------------------------------------------------------------------------------
+Issue:
+  After rewriting the request, the backend still needed to know whether the
+  forced server actually answered and which stream the player loaded.
+
+What was done:
+  - The response listener records the latest forced API response status in
+    forcedStatus (GET requests to /main/(movie|tv)/...?srv=...).
+  - The forced branch waits up to 30s for a 2xx response from the forced
+    server.
+  - Once 2xx is seen:
+      * HLS/DASH is accepted immediately;
+      * MP4 gets a 3s grace period in case an HLS stream appears too.
+  - If the forced server returns any status >= 400 (404, 500, etc.), the wait
+    stops early and the API returns:
+      HTTP 404 { "error": "Not available on server \"<name>\" for this title." }
+  - If no stream appears before the deadline:
+      HTTP 404 { "error": "Could not switch to server \"<name>\" - no stream
+                          was loaded from it." }
+  - Successful result shape:
+      { "streamUrl": "...", "type": "hls" | "dash" | "mp4",
+        "server": "<name>" }
+
+--------------------------------------------------------------------------------
+STEP 4 - SHORT-LIVED EXTRACTION CACHE
+--------------------------------------------------------------------------------
+Issue:
+  Every switch launched a fresh headless browser (~10-15s), even when the
+  viewer switched back to the same server seconds later.
+
+What was done:
+  - Added an in-memory Map cache in server/index.js.
+  - TTL: 3 minutes.
+  - Max: 50 entries (oldest entry removed when full).
+  - Cache key: type:tmdb:season:episode:srv (or "auto" for the default).
+  - Cached results return in milliseconds; switching back and forth is instant.
+
+--------------------------------------------------------------------------------
+STEP 5 - FASTER PAGE LOAD
+--------------------------------------------------------------------------------
+Issue:
+  The extraction page used waitUntil: "networkidle2" with a 45s timeout.
+  This added 10-20s per switch and sometimes waited long after the player was
+  already usable.
+
+What was done:
+  - Changed to waitUntil: "domcontentloaded", timeout: 30s.
+  - The backend polls for the stream separately, so there is no need to wait
+    for network idle.
+  - Navigation timeouts are logged but do not abort extraction.
+
+--------------------------------------------------------------------------------
+STEP 6 - KEEP DEFAULT (AUTO) EXTRACTION WORKING
+--------------------------------------------------------------------------------
+Issue:
+  The manual switch must not break the normal "Watch Now" flow, which does not
+  specify a server.
+
+What was done:
+  - The default branch is unchanged in behavior:
+      * first HLS or DASH wins immediately;
+      * MP4 gets a 5s grace period;
+      * overall deadline: 25s.
+  - It tracks per-server API response times in srvResponses.
+  - The server whose 200 response immediately preceded the captured stream is
+    reported as the active server.
+  - The frontend uses that name in the server pill.
+
+--------------------------------------------------------------------------------
+STEP 7 - SERVER LIST FOR THE PICKER
+--------------------------------------------------------------------------------
+Issue:
+  The UI needs the real Viduki server list (Leon, Jill, Ada, Claire, Ethan,
+  Sherry, Grace, Chris, Wesker, Ashley), but direct API calls without the
+  player's nonce return a decoy.
+
+What was done:
+  - GET /api/servers returns the normalized list:
+      { name, language, mp4, upscale }
+  - The list is cached for 1 hour.
+  - It is harvested passively from the player's own /main/servers response
+    during any extraction, so no extra page load is needed once the app is
+    warm.
+  - On a cold start, one small extraction page is booted just far enough to
+    fetch /main/servers, then closed.
+
+--------------------------------------------------------------------------------
+STEP 8 - FRONTEND PICKER AND SWITCH FLOW
+--------------------------------------------------------------------------------
+Issue:
+  The picker needed to trigger the backend switch, show progress, and keep the
+  current stream playing if the switch failed.
+
+What was done in src/Pages/VideoPlayer.jsx:
+  - A small "server pill" at the top-right while playing opens the picker.
+  - Each row shows the server name, MP4 badge (if applicable) and language
+    badge (EN/HI/VI).
+  - switchServer(name):
+      1. Sets switching state ("Switching to <name>..." + spinner).
+      2. Calls /api/extract?tmdb=<id>&type=movie&srv=<name>.
+      3. On success: playStream(data), setActiveServer(data.server || name),
+         close the panel.
+      4. On error: show the message inside the panel, keep the old stream
+         playing, clear the switching state.
+  - An AbortController is used so a pending request can be cancelled on
+    unmount.
+  - Other server rows are disabled while a switch is in progress.
+
+--------------------------------------------------------------------------------
+STEP 9 - HLS / MP4 FORMAT CHANGES
+--------------------------------------------------------------------------------
+Issue:
+  Viduki's servers do not all use the same format. Some are HLS, some are
+  progressive MP4. Switching between them must reset the player correctly.
+
+What was done in playStream():
+  - Destroy the existing hls.js instance before every switch.
+  - MP4: set video.src directly and play natively (no hls.js).
+  - HLS: route the playlist through /api/proxy (CORS bypass) and attach hls.js.
+  - DASH: return a clear "not supported" error.
+  - The server pill is updated immediately after a successful switch, then
+    confirmed when the new manifest is parsed.
+
+Verified transitions:
+  - HLS -> HLS
+  - HLS -> MP4
+  - MP4 -> HLS
+
+--------------------------------------------------------------------------------
+STEP 10 - VERIFICATION
+--------------------------------------------------------------------------------
+Local test results (cold = no cache, UI = browser switch):
+
+  27205 + srv=Jill (HLS)
+      API cold: ~10.0s
+      Cached:   instant (~0.004s)
+      UI switch: ~5.8s including HLS start
+
+  27205 + srv=Sherry (MP4)
+      API cold: ~13.2s
+      UI HLS -> MP4: ~2.6s (cached)
+
+  1375156 + srv=Chris (HLS)
+      API cold: ~8.7s
+      UI MP4 -> HLS: ~5.1s
+      Repeat switch: ~1.5s
+
+  27205 + srv=Claire (unavailable)
+      ~9.4s, HTTP 404
+      UI shows: Not available on server "Claire" for this title.
+      Old stream keeps playing.
+
+  1375156 + srv=Ethan (upstream 500)
+      ~9.4s, treated as unavailable (HTTP 404 to the client).
+
+  Default extraction:
+      27205   -> ~8.4s, server Leon, HLS
+      1375156 -> ~19.0s, server Sherry, MP4
+
+  Build: npm run build passes.
+  Lint:  npm run lint reports only pre-existing project-wide issues; the
+         changed player file is clean.
+
+--------------------------------------------------------------------------------
+FILES CHANGED
+--------------------------------------------------------------------------------
+  server/index.js
+      - /api/extract srv parameter, cache, CDP rewrite, forced/default
+        branches, result shape.
+      - /api/servers list harvesting and cache.
+  src/Pages/VideoPlayer.jsx
+      - Server picker, switchServer flow, playStream format handling,
+        optimistic active-server highlight.
+  server/README.md
+      - Documents the srv parameter, response shape and 3-minute cache.
+
+Backups of the pre-feature files:
+  .backups/pre-server-toggle/index.js
+  .backups/pre-server-toggle/VideoPlayer.jsx
+  .backups/pre-server-toggle/REVERT.txt
+
+--------------------------------------------------------------------------------
+HOW TO RUN / USE
+--------------------------------------------------------------------------------
+  npm run dev:server     # Express backend on port 3001
+  npm run dev            # Vite frontend on port 5173
+  npm run dev:all        # both
+
+  Open /movie/<tmdb-id>/watch
+  -> click "Watch Now (Ad-Free)"
+  -> click the server pill at the top-right
+  -> choose a server
+  -> the new stream loads; the pill shows the active server
+
+--------------------------------------------------------------------------------
+KNOWN LIMITATIONS / NOTES
+--------------------------------------------------------------------------------
+  - A cold switch launches Puppeteer and takes ~9-15s. The 3-minute cache makes
+    repeat switches instant.
+  - The server list is global; per-title availability varies. Unavailable
+    servers are reported and the old stream continues.
+  - The app's watch route is movie-only (/movie/:id/watch); switchServer sends
+    type=movie.
+  - Forced mode depends on Viduki's API host and path pattern
+    (https://api.viduki.net/main/*). If Viduki changes it, update the CDP
+    pattern and the response-listener regex.
+  - Signed stream URLs expire. If playback fails later, retry or switch again.
+  - There is no automatic wrong-content detection; the viewer is the validator.
+
+--------------------------------------------------------------------------------
+QUICK TROUBLESHOOTING
+--------------------------------------------------------------------------------
+  "Not available on server X"
+      That server has no source for this title. Pick another server.
+
+  "Could not switch to server X - no stream was loaded"
+      The 30s wait timed out. Retry or pick another server.
+
+  Switch feels slow
+      Cold extraction; the next switch to the same server is cached for
+      3 minutes.
+
+  Stream error after switching
+      Signed URL expired or CDN problem. Retry / switch again.
+
+  Switch returns the default stream
+      Verify the CDP handler uses request.url (property), the interception
+      pattern is https://api.viduki.net/main/*, and the server is running the
+      latest server/index.js.
+
+--------------------------------------------------------------------------------
+ONE-LINE SUMMARY
+--------------------------------------------------------------------------------
+  Manual server switching now works by rewriting the player's own ?srv= API
+  request instead of clicking Viduki's panel: ~9-10s cold, instant cached,
+  HLS/MP4 supported, and clean per-server error handling.
+================================================================================

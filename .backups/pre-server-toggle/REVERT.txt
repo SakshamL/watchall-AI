@@ -1,0 +1,17 @@
+REVERT INSTRUCTIONS
+===================
+
+This folder holds snapshots of exactly how the project was BEFORE the
+manual server-picker feature was added (26 Oct 2026).
+
+Files backed up:
+  index.js          ->  restore to:  server\index.js
+  VideoPlayer.jsx   ->  restore to:  src\Pages\VideoPlayer.jsx
+
+To revert, from the project root run:
+
+  copy ".backups\pre-server-toggle\index.js"      "server\index.js" /Y
+  copy ".backups\pre-server-toggle\VideoPlayer.jsx" "src\Pages\VideoPlayer.jsx" /Y
+
+Then restart the Express server (the frontend reloads automatically in dev).
+That is all — the feature is fully contained inside those two files.

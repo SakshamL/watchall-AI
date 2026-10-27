@@ -1,0 +1,146 @@
+WATCHALL — IMPLEMENTATION LOG
+=============================
+
+This file keeps a short, human-readable record of the major fixes, features, and changes made to the WatchAll app.
+Each entry explains what the problem or feature was, what changed, which files were affected, and how it was verified.
+New entries are added at the bottom in chronological order. Older entries are never removed.
+
+---
+
+Date: 2026-10-27
+Area: Video player / playback start
+
+Issue/Feature:
+Opening the watch page required an extra "Watch Now (Ad-Free)" click before the video started.
+
+What changed:
+The extra button was removed. The player now starts finding and loading the stream automatically as soon as the watch page opens. A guard was added so React's development-mode double render does not start the extraction twice. The player now shows its loading state immediately.
+
+Files affected:
+src/Pages/VideoPlayer.jsx
+
+Verified:
+Opening /movie/:id/watch starts playback automatically with no extra click. The production build passes. The old legacy page src/Pages/testplyaer.jsx still contains the old button text, but that page is not routed or used.
+
+---
+
+Date: 2026-10-27
+Area: Stream extraction / playback reliability
+
+Issue/Feature:
+Some movies would not play because the extractor returned the first stream link it found without checking whether that link actually worked. Several Viduki CDN hosts were returning Cloudflare 522 errors or timing out, so the player was given a dead stream.
+
+What changed:
+The backend now checks each candidate stream before returning it. HLS links must return a valid playlist, DASH links must return a valid manifest, and MP4 links must respond to a small range request. Dead links are skipped and the search continues. The search time limit was extended, MP4-only titles get a short grace period, and manually switching to a dead server now returns a clear "server not responding" message. The player loading text now explains that it is finding a working server.
+
+Files affected:
+server/index.js
+src/Pages/VideoPlayer.jsx
+
+Verified:
+Tested with Inception, an MP4-only title, and several other titles. Forced-server switching works, and forcing a dead server returns a clear 502 error. The build passes.
+
+---
+
+Date: 2026-10-27
+Area: Search
+
+Issue/Feature:
+Search gave wrong or incomplete results for special characters and exact titles. "Fast & Furious" was effectively searched as only "Fast" because the search text was not encoded safely in the request, and the exact movie "Mrs." appeared on page 2 of TMDB's mixed search instead of page 1.
+
+What changed:
+Search text is now encoded correctly, so symbols such as "&" no longer break the request. Results from TMDB's movie, TV, and mixed searches are now combined, duplicates are removed, and results are ordered so an exact title match comes first, followed by titles that start with the search text, then partial matches. Slow responses from older searches can no longer overwrite the results of a newer search.
+
+Files affected:
+src/Services/api.jsx
+src/Components/SearchBar.jsx
+
+Verified:
+In the running app, "Mrs." now returns the exact movie first, and "Fast & Furious" returns the correct 2009 film first. Other searches such as "Mr. & Mrs. Smith", "Spider-Man", "Drishyam 2", and "3 Idiots" also ranked correctly. The build passes.
+
+---
+
+Date: 2026-10-27
+Area: Stream server selection / language
+
+Issue/Feature:
+Hindi titles were being played from English servers first, which could give the wrong audio. The desired behavior is to try all Hindi servers first and only fall back to the other servers if no Hindi server can play the title.
+
+What changed:
+The player now checks the title's original language in TMDB and sends it to the extractor. For Hindi titles, the backend rewrites Viduki's server list so all HINDI servers (currently Chris, Wesker, and Grace) come first, followed by the remaining servers. The player still walks the list normally: if one Hindi server fails, it moves to the next Hindi server, and only after all Hindi servers fail does it continue to the English/Vietnamese servers. The server picker keeps its original order, and manual server switching is unchanged.
+
+Files affected:
+server/index.js
+src/Pages/VideoPlayer.jsx
+
+Verified:
+3 Idiots and DDLJ played from Chris. A simulated Chris failure fell back to Wesker. Blocking all three Hindi servers made the player continue to Leon, Jill, Ada, Claire, and Sherry and still play. Inception (English) still played from Leon. Confirmed in the live app that /api/extract receives lang=hi for Hindi titles and lang=en for English titles. The build and server syntax checks pass.
+
+---
+
+Date: 2026-10-27
+Area: Project tracking / documentation
+
+Issue/Feature:
+There was no running record of major fixes and features, making it hard to recall what changed later.
+
+What changed:
+Created this implementation log and added a standing rule to AGENTS.md so future sessions add a new entry here after completing a major fix, feature, or change.
+
+Files affected:
+docs/IMPLEMENTATION_LOG.txt
+AGENTS.md
+
+Verified:
+The log file and the project rule were created successfully.
+
+---
+
+Date: 2026-10-27
+Area: Video player / stream proxy
+
+Issue/Feature:
+The watch page used an older third-party player and the backend only handled simple HLS playlists. It did not give us a consistent full-screen player, DASH support, reliable seeking through byte ranges, or server switching from inside the player.
+
+What changed:
+The movie watch page now uses a custom WatchAll player built specifically for this project. It fills the screen in black, keeps the rest of the site navigation out of the way, and adjusts its layout for phones, tablets, desktop, and browser-based TVs. It includes a seek bar, play and pause, 10-second skip buttons, volume, auto-hide controls, keyboard shortcuts, mobile gestures, captions, playback speed, quality selection, server switching, retry messages, loading states, and fullscreen/picture-in-picture where the browser supports them. It also remembers your volume, captions, quality preference, and playback position. Media Session support lets phone and system controls work with the player. Focus is trapped inside the settings and help panels, Escape closes them, and TV remotes can move between controls with the arrow keys.
+
+The backend now understands both HLS and DASH. It rewrites HLS playlists and DASH manifests so every key, initialization file, playlist, and segment goes back through the local proxy. It supports byte-range requests, which makes seeking work properly, and it caches recent media so replays and short seeks do not download the same data again. The proxy accepts both the original query format and the newer encoded path format, reports content type through a media-info endpoint, and allows the port to be changed with a PORT setting.
+
+During testing we found and fixed a DASH issue where the supported track-change event name was different from the one being used. That error was stopping DASH playback before it started. DASH BaseURL handling was also corrected so nested and relative base addresses resolve to the right CDN files. The production backend was restarted so it is now running this code.
+
+Files affected:
+src/Components/Player/player.css
+src/Components/Player/WatchPlayer.jsx
+src/Components/Player/usePlaybackEngine.js
+src/Components/Player/PlayerSettings.jsx
+src/Components/Player/PlayerTimeline.jsx
+src/Components/Player/playerUtils.js
+src/Pages/VideoPlayer.jsx
+src/App.jsx
+src/index.css
+index.html
+server/index.js
+package.json
+package-lock.json
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The production build passes. The new player files pass ESLint, and the backend passes Node's syntax check. The restarted backend returned a valid DASH manifest rewrite, a working HLS playlist rewrite, and a 206 byte-range response for a DASH segment. Headless browser tests played both a public DASH stream and a public HLS stream, including the desktop, mobile, and TV layouts. Settings and help panels kept keyboard focus inside, closed with Escape, and produced no page errors. The real watch page was tested with Fight Club (TMDB 550): it loaded metadata from TMDB, extracted a working stream from Sherry, played the video, and displayed the custom controls. The project-wide lint command still reports older unrelated errors in other parts of the app; the player and backend changes tested cleanly.
+
+---
+
+Date: 2026-10-27
+Area: Video player controls
+
+Issue/Feature:
+The error screen buttons and some player controls looked like plain text. The player's general button reset was more specific than the button styles, so it removed the padding, borders, and backgrounds from important buttons such as "Try again", "Choose server", and the settings rows.
+
+What changed:
+The general button reset now uses lower cascade priority, allowing each button's own style to apply normally. The error buttons, settings rows, play button, and icon buttons now show their intended size, spacing, colors, and focus rings.
+
+Files affected:
+src/Components/Player/player.css
+
+Verified:
+A forced playback error now shows a proper gradient "Try again" button and separate "Choose server" and "Go back" buttons. The settings panel rows and desktop control buttons also show their intended backgrounds and spacing. Browser tests produced no page errors, and the production build passes.

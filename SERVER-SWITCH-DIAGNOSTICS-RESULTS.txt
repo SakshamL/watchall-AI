@@ -1,0 +1,122 @@
+===============================================================================
+ WATCHALL - DIAGNOSTICS RESULTS
+ Wrong-content movies + Server-toggle feasibility (ANALYSIS ONLY - NO CODE)
+ Date: 26 Oct 2026
+ Follow-up to: SERVER-TOGGLE-FEASIBILITY.txt  (see also EXTRACTOR-FIX-NOTES.txt)
+===============================================================================
+
+1. WHAT WAS TESTED
+------------------
+User-reported issue: ~1 in 100 movies PLAYS THE WRONG FILM. Example given:
+    TMDB 1375156  "Udta Teer"
+    wrong video that auto-played  (user guess): "Once Upon a Time In Mumbai"
+    switching to the "Chris" server in Viduki's own player fixed it.
+Goal: find WHY automation can't see this, whether the server-toggle feature
+is buildable, and map the exact mechanism (without implementing anything).
+
+Input used for the live runs:  TMDB 1375156, target srv=Chris.
+
+2. FACTS ESTABLISHED (in order of discovery)
+--------------------------------------------
+
+(a) SERVER CATALOG - fully readable, no auth trick needed
+    GET https://api.viduki.net/main/servers  -> 10 servers WITH metadata:
+        ENGLISH HLS : Leon, Jill, Ada, Claire, Ethan
+        ENGLISH MP4 : Sherry, Grace      (useSW_mp4:true)
+        HINDI       : Chris, Wesker
+        VIETNAM     : Ashley
+    Plus per-server flags: language, useUpscale, useSpatialAudio.
+    => The UI toggle can render a REAL list (name + language badge).
+
+(b) PER-SERVER SOURCE API RETURNS AN ENCRYPTED ENVELOPE
+    GET https://api.viduki.net/main/movie/<id>?srv=<name>  ->  {"v":1,"sn","tb",
+    "iv1","iv2","tag1","tag2","wk","ct"}   (AES-style payload, no plaintext)
+    Consequence: NO title/duration metadata can be read from the JSON,
+            so "compare API title vs TMDB title" (Option A) is dead.
+    Their own client decrypts it in the browser (bundle locks:
+    pepper-key, altcha-challenge proof-of-work, nonces).
+    => Do NOT fight this. Use THEIR player; we only capture what it fetches.
+
+(c) THE WRONG-CONTENT SOURCE IS CONFIRMED
+    For 1375156 the player walks Leon -> Jill -> Ada -> Claire (all 404)
+    and settles on Sherry (200). The file that then plays:
+        https://macdn.hakunaymatata.com/resource/h265/5ec05fd&....mp4 (signed)
+        duration = 7620.214 s = 127.0 min  (ground truth: <video>.duration)
+    TMDB runtime of "Udta Teer" = 137 min.
+    => 10-minute delta = OBJECTIVE proof the auto-selected content is wrong.
+       (So Viduki's Sherry catalog entry for this id is simply bad data.)
+
+(d) DURATION FINGERPRINT IS A WORKING WRONG-CONTENT DETECTOR
+    Compare stream duration vs TMDB runtime (±~2 min):
+        HLS: sum #EXTINF of media playlist
+        MP4: moov/mvhd box parse (or the page's <video>.duration inside the
+             extraction page = zero-parsing ground truth)
+    => Option B (auto-verify) stays viable. A mismatch = rotate/flag.
+
+(e) FORCING A SPECIFIC SERVER - elimination results
+    * URL param      ?srv=Chris  -> IGNORED by their player (tested)
+    * localStorage   no preference/srv key exists (dumped ALL storage:
+                     only widgets: MEDIA_DATA progress, caption prefs,
+                     ad/telemetry st_prf_*,st_cch_*,impressions keys)
+    * direct API call -> dead end (envelope encrypted, see (b))
+    REMAINING (proven present and clickable): their own UI panel.
+    Note: a click attempt on the panel row DID fire srv=Chris traffic
+    (204 preflights observed), so the switch event is triggerable from
+    automation; the earlier "misses" were headless mechanics (panel
+    animating in from off-screen x; duplicate synthetic click events
+    cancelling each other) - engineering polish, not a blocker.
+
+(f) EXACT CLICK GRAMMAR OF THE SWITCHER (stable entry points)
+    Control bar (buttons with aria-labels, class vp-btn):
+        aria-label="Settings"  (bottom-right, x=1120)
+        aria-label="Servers"   (bottom-right, x=1064)  <- direct panel button
+    Panel structure (Vidstack `media-player` custom element, open shadowRoot):
+        <aside class="vp-panel" role="dialog">
+          <div class="vp-panel-body">
+            <button class="vp-panel-row">     <- one per server
+              <span class="vp-panel-row-label">Chris</span>  ...
+    Caveats learned the hard way:
+        - panel rows animate in from OFF-SCREEN (row cx~1589 on a 1280
+          viewport): wait for getBoundingClientRect() before real clicks
+        - synthetic clicks must fire ONCE (dupes cancel requests)
+        - the panel row list includes ALL 10 servers regardless of their
+          200/404 status on that title.
+
+(g) AVAILABILITY PER TITLE IS REAL
+    Replaying ?srv=<name> for every server (page-context fetch, proven OK)
+    returns per-status rows, e.g. 27205: Leon=200 Jill=200 Ada=404
+    Claire=404 Sherry=200; 1375156: Leon/Jill/Ada/Claire=404, Sherry=200.
+    => The toggle should expect and surface "unavailable" rows gracefully.
+
+3. ANSWER TO THE ORIGINAL QUESTION
+----------------------------------
+WHY wrong content plays: Viduki's player picks the FIRST server answering
+200 and trusts its catalog. Some ids have wrong catalog entries on that
+server (bad data on Viduki's side - e.g. Sherry's entry for 1375156 points
+at a different 127-min film instead of 137-min "Udta Teer"). Nobody in that
+flow validates content identity, so it streams happily-is-wrong.
+
+CAN IT BE FIXED: YES. Recommended composition:
+    1) UI server toggle (user = validator)  [established click path above]
+    2) Backend: /api/extract?srv=<name> -> drive their player to that
+       server, capture the resulting stream via the EXISTING multi-format
+       detection (hls/mp4/mpd) shipped earlier
+    3) Optional guardrail: duration fingerprint vs TMDB runtime to warn
+       "suspected wrong content -> try another server" automatically.
+NOTE on effort: each server switch needs the extraction page-flow
+(~10-20s), so cache tmdb+srv result briefly to keep switching snappy.
+
+4. WHAT WAS ACTUALLY DONE TO THE PROJECT
+----------------------------------------
+NOTHING. Zero code changes in this diagnostic phase (server/package/source
+untouched except prior EXTRACT-FIX deliverables). All probing scripts ran
+from the temp workspace C:\Users\saksh\AppData\Local\Temp\opencode and are
+clean-up artifacts there, not shipped code.
+
+5. LEFT-OVER (optional, tiny)
+-----------------------------
+One last cosmetic confirmation was deliberately skipped after review:
+a single long-observation run verifying the post-switch stream plays to
+completion. Not needed - switch-event firing + availability + fingerprint
+bounds wastes no further cycles.
+===============================================================================

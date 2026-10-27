@@ -1,0 +1,152 @@
+@import "tailwindcss";
+@tailwind utilities;
+
+html,
+body {
+  /* background: linear-gradient(
+    180deg,
+    rgba(15, 11, 11, 1) 0%,
+    rgba(22, 35, 51, 1) 100%,
+    rgba(237, 221, 83, 1) 72%
+  ); */
+  background: linear-gradient(
+    180deg,
+    rgba(6, 18, 33, 1) 0%,
+    /* rgba(16, 15, 15, 1) 100% */ rgba(0, 0, 0, 1) 100%
+  );
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  padding: 0% 2%;
+}
+
+html.wa-watch-active,
+body.wa-watch-active {
+  overflow: hidden;
+  padding: 0;
+  background: #000;
+  overscroll-behavior: none;
+}
+
+a {
+  text-decoration: none;
+}
+
+.active {
+  background-color: #382d52;
+  /* background-color: #686d98; */
+}
+
+.featuredcards:hover div {
+  bottom: 0;
+}
+
+.featuredcards:hover img {
+  filter: brightness(0.5);
+}
+
+.search-results {
+  @apply flex visible  w-full h-[300px] gap-5 rounded-[10px] transition-all duration-200 ease-in-out flex-wrap overflow-x-hidden pt-10 pb-10;
+}
+
+.navbar-menu-items {
+  @apply py-3 px-5 cursor-pointer rounded hover:bg-[#382d52] transition duration-300;
+}
+
+.responsive-navbar {
+  /* @apply max-lg:flex max-lg:text-2xl max-lg:justify-center; */
+  @apply max-lg:absolute max-lg:top-0 max-lg:left-0 max-lg:flex max-lg:gap-8 max-lg:w-[100vw] max-lg:bg-[#10121b] max-lg:h-[100vh] max-lg:items-center max-lg:justify-center max-lg:z-10;
+}
+
+@layer components {
+  .title-bg-gradient {
+    background: linear-gradient(
+      180deg,
+      rgba(15, 11, 11, 1) 0%,
+      rgba(22, 35, 51, 1) 100%,
+      rgba(237, 221, 83, 1) 72%
+    );
+  }
+
+  .searchBar-gradient {
+    background: linear-gradient(
+      180deg,
+      rgba(15, 11, 11, 1) 0%,
+      rgb(33, 40, 71) 43%
+    );
+  }
+
+  .movie-card-gradient {
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(133, 133, 133, 0) 27%,
+      rgba(0, 0, 0, 0) 60%,
+      rgba(0, 0, 0, 1) 94%
+    );
+  }
+
+  .font-inter {
+    font-family: "Inter", sans-serif;
+  }
+
+  .font-inria-sans {
+    font-family: "Inria Sans", sans-serif;
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  .krub-regular {
+    font-family: "Krub", sans-serif;
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  .backdrop-mask-gradient {
+    mask-image: linear-gradient(
+      180deg,
+      rgba(24, 24, 38, 0) 0%,
+      rgba(0, 0, 0, 1) 0%,
+      rgba(17, 16, 18, 0) 80%
+    );
+  }
+
+  .mask1 {
+    -webkit-mask-image: linear-gradient(black, transparent);
+    mask-image: linear-gradient(black, transparent);
+  }
+
+  .scrollhide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* This ensures the handle/thumb is visible and interactive */
+  .custom-slider::-webkit-slider-thumb {
+    @apply appearance-none pointer-events-auto w-5 h-5 bg-white border-2 border-blue-500 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-md;
+  }
+
+  .custom-slider::-moz-range-thumb {
+    @apply appearance-none pointer-events-auto w-5 h-5 bg-white border-2 border-blue-500 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-md;
+  }
+
+  /* Shimmer skeleton — shows while image is loading */
+  .img-skeleton {
+    background: linear-gradient(90deg, #1a1f35 25%, #252b45 50%, #1a1f35 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Image starts invisible, fades in smoothly when fully loaded */
+  .img-fade-in {
+    opacity: 0;
+    transition: opacity 0.4s ease-in-out;
+  }
+
+  .img-fade-in.loaded {
+    opacity: 1;
+  }
+}
