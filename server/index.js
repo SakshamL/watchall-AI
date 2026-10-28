@@ -35,9 +35,16 @@ function browserlessEndpoint() {
   const token = String(process.env.BROWSERLESS_TOKEN || "").trim();
   if (!token) return "";
   const url = new URL(BROWSERLESS_URL);
+  if (url.protocol !== "wss:" && url.protocol !== "ws:") {
+    throw new Error("BROWSERLESS_URL must start with wss:// or ws://");
+  }
   url.searchParams.set("token", token);
   url.searchParams.set("timeout", "110000");
   return url.toString();
+}
+
+function redactSecret(value) {
+  return String(value || "").replace(/([?&]token=)[^&\s]+/gi, "$1[redacted]");
 }
 
 function localLaunchOptions() {
@@ -59,9 +66,10 @@ async function getBrowser() {
     try {
       return await puppeteer.connect({ browserWSEndpoint: endpoint });
     } catch (error) {
-      console.error(`[browser] Browserless connection failed (${error?.name || "Error"})`);
+      const detail = redactSecret(error?.message || "");
+      console.error(`[browser] Browserless connection failed: ${detail || "unknown error"}`);
       throw new Error(
-        "Browser service unavailable. Check BROWSERLESS_TOKEN and the Browserless plan limits."
+        `Browser service unavailable. ${detail || "Check BROWSERLESS_TOKEN and the Browserless plan limits."}`
       );
     }
   }
