@@ -260,3 +260,21 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The local extraction log for TMDB 1375156 shows Viduki's player loading the Chris HLS stream and the server returning srv=Chris type=hls. The new logic accepts that stream because the browser loaded its manifest successfully. server/index.js passes Node's syntax check and ESLint, and the production build passes. The deployed fix still needs to be redeployed and tested with the same movie on Vercel.
+
+---
+
+Date: 2026-10-28
+Area: Video player controls (mobile)
+
+Issue/Feature:
+On mobile, tapping the video while the controls were hidden made the controls appear and then disappear almost immediately. They did not stay on screen for the usual few seconds.
+
+What changed:
+The tap handler now remembers whether the controls were already visible before the tap. Tapping a hidden player keeps the controls visible for the normal three-second timeout. Tapping while they are already visible still hides them, as before. This fixes the quick flash-and-disappear behaviour without changing the brightness and volume swipe gestures.
+
+Files affected:
+src/Components/Player/WatchPlayer.jsx
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The changed player file passes ESLint, and the production build passes. The logic was checked for single tap, double tap, and vertical swipe paths.

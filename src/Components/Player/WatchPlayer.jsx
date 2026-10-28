@@ -1080,6 +1080,10 @@ export default function WatchPlayer({
   }, [moveFocus, profile.isTV, profile.supportsPip, videoRef]);
 
   const handleGesturePointerDown = (event) => {
+    // Remember whether the controls were already visible before this tap.
+    // showUi() runs immediately for instant feedback, so checking the ref later
+    // in the tap timer would always see "visible" and hide the controls again.
+    const startedUiVisible = uiVisibleRef.current;
     showUi();
     if (event.pointerType === "mouse") return;
     gestureRef.current = {
@@ -1088,6 +1092,7 @@ export default function WatchPlayer({
       startY: event.clientY,
       startVolume: videoRef.current?.volume ?? 1,
       startBrightness: brightnessRef.current,
+      startedUiVisible,
       mode: "",
       moved: false,
     };
@@ -1157,7 +1162,9 @@ export default function WatchPlayer({
     lastTapRef.current = { time: now, side };
     clearTimeout(tapTimerRef.current);
     tapTimerRef.current = setTimeout(() => {
-      if (uiVisibleRef.current && isPlayingRef.current) hideUi();
+      // Only hide when the controls were already on screen before this tap.
+      // A tap on a hidden player keeps them visible for the normal timeout.
+      if (gesture?.startedUiVisible && isPlayingRef.current) hideUi();
       else showUi();
     }, 280);
   };
