@@ -105,7 +105,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  touch-action: manipulation;
+  touch-action: none;
 }
 
 .wa-scrim {

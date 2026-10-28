@@ -306,7 +306,18 @@ export default function WatchPlayer({
     []
   );
 
-  const handleActivity = useCallback(() => {
+  const handleActivity = useCallback((event) => {
+    // Touch and pen on the video surface are handled by the gesture layer.
+    // Showing the chrome on every touch move made swipes for brightness and
+    // volume reveal the controls. Touches on the controls themselves still
+    // count as activity so the chrome does not hide mid-drag.
+    const isPointer =
+      event?.type === "pointermove" || event?.type === "pointerdown";
+    const onVideoSurface =
+      isPointer &&
+      event.pointerType !== "mouse" &&
+      event.target?.closest?.(".wa-gesture-layer");
+    if (onVideoSurface) return;
     if (!uiVisibleRef.current) setUiVisible(true);
     armHideTimer();
   }, [armHideTimer]);
@@ -1081,17 +1092,22 @@ export default function WatchPlayer({
 
   const handleGesturePointerDown = (event) => {
     // Remember whether the controls were already visible before this tap.
-    // showUi() runs immediately for instant feedback, so checking the ref later
-    // in the tap timer would always see "visible" and hide the controls again.
+    // For touch, the chrome is shown on tap-up instead of touch-down so that
+    // swipes never reveal the controls.
     const startedUiVisible = uiVisibleRef.current;
-    showUi();
-    if (event.pointerType === "mouse") return;
+    if (event.pointerType === "mouse") {
+      showUi();
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
     gestureRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       startVolume: videoRef.current?.volume ?? 1,
       startBrightness: brightnessRef.current,
+      centerX: rect.left + rect.width / 2,
+      height: rect.height || window.innerHeight,
       startedUiVisible,
       mode: "",
       moved: false,
@@ -1105,23 +1121,33 @@ export default function WatchPlayer({
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     const dx = event.clientX - gesture.startX;
     const dy = event.clientY - gesture.startY;
+    // Any real movement means this is a swipe, not a tap. Without this, a
+    // horizontal swipe was treated as a tap and toggled the controls.
+    if (!gesture.moved && Math.hypot(dx, dy) > 12) {
+      gesture.moved = true;
+    }
     if (!gesture.mode && Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
       gesture.mode =
-        event.clientX < window.innerWidth / 2
+        gesture.startX < gesture.centerX
           ? "brightness"
           : profile.isIOS
             ? "volume-hint"
             : "volume";
     }
     if (!gesture.mode) return;
-    gesture.moved = true;
     event.preventDefault();
-    const delta = -dy / Math.max(220, window.innerHeight * 0.55);
+    const delta = -dy / Math.max(180, gesture.height * 0.55);
     clearTimeout(gestureTimerRef.current);
+    // Safety net: if the release event is ever lost, the HUD still clears.
+    gestureTimerRef.current = setTimeout(() => setGestureHud(null), 2500);
     if (gesture.mode === "brightness") {
       const next = clamp(gesture.startBrightness + delta, 0.35, 1.15);
       setBrightness(next);
-      setGestureHud({ id: Date.now(), kind: "brightness", value: next });
+      setGestureHud({
+        id: Date.now(),
+        kind: "brightness",
+        value: (next - 0.35) / 0.8,
+      });
     } else if (gesture.mode === "volume") {
       const next = clamp(gesture.startVolume + delta, 0, 1);
       setVolume(next);
@@ -1160,6 +1186,8 @@ export default function WatchPlayer({
       return;
     }
     lastTapRef.current = { time: now, side };
+    // A tap on a hidden player should reveal the chrome immediately.
+    if (!gesture?.startedUiVisible) showUi();
     clearTimeout(tapTimerRef.current);
     tapTimerRef.current = setTimeout(() => {
       // Only hide when the controls were already on screen before this tap.
@@ -1170,7 +1198,14 @@ export default function WatchPlayer({
   };
 
   const handleGesturePointerCancel = () => {
+    const gesture = gestureRef.current;
     gestureRef.current = null;
+    // The browser can cancel a touch pointer (for example when it takes over
+    // scrolling). Clear the HUD just like a normal release so it never sticks.
+    if (gesture?.mode) {
+      clearTimeout(gestureTimerRef.current);
+      gestureTimerRef.current = setTimeout(() => setGestureHud(null), 650);
+    }
   };
 
   const volumeIcon =

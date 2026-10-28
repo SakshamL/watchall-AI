@@ -278,3 +278,24 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The changed player file passes ESLint, and the production build passes. The logic was checked for single tap, double tap, and vertical swipe paths.
+
+---
+
+Date: 2026-10-28
+Area: Video player controls (mobile gestures)
+
+Issue/Feature:
+On mobile, swiping anywhere on the video made the control bar appear. The brightness and volume swipe gestures were unreliable, and the brightness/volume popup in the middle of the screen could stay visible after the finger was lifted.
+
+What changed:
+Touch and pen activity no longer reveals the control bar. On touch, the controls are now shown when a tap ends, not when the finger first touches the screen, so swipes stay clean. Any movement beyond a small threshold is now treated as a swipe, which stops horizontal swipes from being mistaken for taps. The gesture layer now uses touch-action: none so the browser does not take the swipe away for scrolling or zooming, which is what made brightness and volume adjustments stop partway.
+
+The brightness popup bar now reflects the full brightness range instead of sitting at 100% for most of the swipe. The popup also clears when the browser cancels a touch pointer, and a 2.5-second safety timer clears it if a release event is ever lost, so it cannot remain stuck on screen.
+
+Files affected:
+src/Components/Player/WatchPlayer.jsx
+src/Components/Player/player.css
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The changed player file passes ESLint and the production build passes. The gesture logic was reviewed for taps, vertical swipes, horizontal swipes, normal release, and cancelled pointers. It has not yet been tested on a physical phone.
