@@ -144,3 +144,42 @@ src/Components/Player/player.css
 
 Verified:
 A forced playback error now shows a proper gradient "Try again" button and separate "Choose server" and "Go back" buttons. The settings panel rows and desktop control buttons also show their intended backgrounds and spacing. Browser tests produced no page errors, and the production build passes.
+
+---
+
+Date: 2026-10-28
+Area: Deployment / Stream playback
+
+Issue/Feature:
+The app needed a separate computer running the Express/Puppeteer backend, which made a free deployment difficult. The goal was to host everything on Vercel for free while keeping stream extraction and playback working.
+
+What changed:
+A full backup of the working version was created first. It can be restored at any time from the local Git branch "backup/pre-vercel-only", the tag "backup-pre-vercel-only-2026-10-28", or the copies in ".backups/pre-vercel-only".
+
+The backend can now connect to Browserless, a cloud browser service, using the BROWSERLESS_TOKEN setting. It defaults to Browserless's London stealth endpoint with a 110-second session limit. Local development still launches the installed Chrome, so no Browserless account is needed locally. On Vercel, a missing token produces a clear error instead of trying to start a browser that is not installed.
+
+The Express app is now exported from server/index.js, and the local listener only starts when the file is run directly. The new api/index.js file exposes the same app as a single Vercel serverless function. A small api/package.json file marks the function folder as CommonJS so Vercel bundles the server code reliably even though the frontend package is an ES module. vercel.json sends every /api/* request to that function and sends all other routes to the React app.
+
+The server list endpoint now returns a complete built-in list immediately instead of launching a browser on a cold start. The list is still refreshed automatically during normal extraction. Extraction time limits were shortened so a request fits inside Browserless's free two-minute session limit and the 120-second Vercel function limit.
+
+In production, the player now plays the raw CDN stream URL directly, so video data no longer passes through any server. Local development keeps using the existing proxy so local playback still works. The proxy endpoint remains available as an optional fallback.
+
+The backend packages were added to the root package.json because Vercel installs dependencies from the project root. An .env.example file, a .vercel ignore rule, ESLint settings for the server code and backup folder, and an updated server README were added.
+
+Files affected:
+server/index.js
+api/index.js
+api/package.json
+vercel.json
+package.json
+package-lock.json
+src/Components/Player/playerUtils.js
+server/README.md
+eslint.config.js
+.gitignore
+.env.example
+.backups/pre-vercel-only/ (backup copies and REVERT.txt)
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The production build passes. The Vercel function entry file loads correctly, and a local request to its /api/servers endpoint returned 200 with the full ten-server list. Direct CDN playback was verified earlier: the stream responded with the correct CORS header when the browser Referer was present, and segments returned video data. Backend and API code now pass ESLint; the project-wide lint command still reports older unrelated errors in frontend files. The Browserless connection itself has not been tested yet because a Browserless token has not been added.

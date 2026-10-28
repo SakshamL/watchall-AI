@@ -1,0 +1,25 @@
+WatchAll - backup before Vercel-only deployment (2026-10-28)
+
+Git backup:
+- Branch: backup/pre-vercel-only
+- Tag: backup-pre-vercel-only-2026-10-28
+
+Restore the tracked files:
+  git checkout backup/pre-vercel-only -- .
+  npm install
+
+Or reset the whole project to the backup commit:
+  git reset --hard backup/pre-vercel-only
+
+After restoring, remove the new untracked deployment files if you want the exact old layout:
+  rm -rf api .env.example .backups/pre-vercel-only
+
+Files copied in this folder:
+- server-index.js  -> server/index.js
+- playerUtils.js   -> src/Components/Player/playerUtils.js
+- VideoPlayer.jsx  -> src/Pages/VideoPlayer.jsx
+- package.json
+- vercel.json
+- vite.config.js
+
+package-lock.json was updated by npm install, so use the git backup to restore it.

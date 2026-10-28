@@ -26,8 +26,52 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const BUILD = "stream-probe-v6 " + new Date().toISOString();
+const BROWSERLESS_URL =
+  process.env.BROWSERLESS_URL || "wss://production-lon.browserless.io/stealth";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function browserlessEndpoint() {
+  const token = String(process.env.BROWSERLESS_TOKEN || "").trim();
+  if (!token) return "";
+  const url = new URL(BROWSERLESS_URL);
+  url.searchParams.set("token", token);
+  url.searchParams.set("timeout", "110000");
+  return url.toString();
+}
+
+function localLaunchOptions() {
+  return {
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  };
+}
+
+async function getBrowser() {
+  const endpoint = browserlessEndpoint();
+  if (endpoint) {
+    console.log("[browser] Connecting to Browserless");
+    try {
+      return await puppeteer.connect({ browserWSEndpoint: endpoint });
+    } catch (error) {
+      console.error(`[browser] Browserless connection failed (${error?.name || "Error"})`);
+      throw new Error(
+        "Browser service unavailable. Check BROWSERLESS_TOKEN and the Browserless plan limits."
+      );
+    }
+  }
+  if (process.env.VERCEL) {
+    throw new Error(
+      "BROWSERLESS_TOKEN is not configured. Add it in the Vercel project environment variables."
+    );
+  }
+  return puppeteer.launch(localLaunchOptions());
+}
 
 // ─── Short-lived extraction cache ────────────────────────────────────────────
 // Switching servers used to relaunch the whole extraction every time. Caching
@@ -340,6 +384,7 @@ async function probeStream(url, kind) {
 // direct MP4 — so detection must catch multiple formats, not just ".m3u8".
 
 app.get("/api/extract", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   const { tmdb, type = "movie", season, episode } = req.query;
   const forcedSrv =
     typeof req.query.srv === "string" ? req.query.srv.trim().replace(/[^A-Za-z]/g, "") : "";
@@ -369,15 +414,7 @@ app.get("/api/extract", async (req, res) => {
 
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: "new", // "new" = Chrome Headless, closer to real browser than headless:true (shell mode)
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
+    browser = await getBrowser();
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720 });
@@ -572,7 +609,7 @@ app.get("/api/extract", async (req, res) => {
     // domcontentloaded is enough — the player boots on its own and we poll for
     // its stream below. Waiting for networkidle2 added ~10-20s per request.
     try {
-      await page.goto(vidukiUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.goto(vidukiUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
     } catch (navErr) {
       console.log(`[extract] goto did not settle (${navErr.message}) — continuing`);
     }
@@ -582,7 +619,7 @@ app.get("/api/extract", async (req, res) => {
 
     if (forcedSrv) {
       console.log(`[extract] FORCED branch, srv=${forcedSrv}`);
-      const deadline = Date.now() + 30000;
+      const deadline = Date.now() + 25000;
       let mp4SeenAt = null;
       let notAvailable = false;
 
@@ -641,7 +678,7 @@ app.get("/api/extract", async (req, res) => {
       // every candidate and keep listening until one actually responds — the
       // player will move on to another server/format when a stream fails.
       const badStreams = new Set();
-      const deadline = Date.now() + 75000;
+      const deadline = Date.now() + 45000;
       let mp4GraceEnd = null;
 
       while (Date.now() < deadline) {
@@ -725,9 +762,13 @@ app.get("/api/extract", async (req, res) => {
 
   } catch (err) {
     console.error("[extract] Error:", err.message);
-    res.status(500).json({ error: "Extraction failed", details: err.message });
+    res.status(500).json({ error: err.message || "Extraction failed" });
   } finally {
-    if (browser) await browser.close();
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {}
+    }
   }
 });
 
@@ -776,8 +817,19 @@ function buildDiagnostics(requestLog, consoleErrors) {
 // Direct calls to api.viduki.net/main/servers WITHOUT the player's nonce
 // headers return a decoy stream object, so the list is harvested from the
 // extraction page boot instead (the player requests it on every load).
-const serversCache = { data: null, fetchedAt: 0 };
-const SERVERS_CACHE_TTL = 60 * 60 * 1000; // 1h
+const serversCache = { data: null };
+const FALLBACK_SERVERS = [
+  { name: "Leon", language: "ENGLISH", mp4: false, upscale: true },
+  { name: "Jill", language: "ENGLISH", mp4: false, upscale: true },
+  { name: "Ada", language: "ENGLISH", mp4: false, upscale: true },
+  { name: "Claire", language: "ENGLISH", mp4: false, upscale: true },
+  { name: "Sherry", language: "ENGLISH", mp4: true, upscale: false },
+  { name: "Ethan", language: "ENGLISH", mp4: false, upscale: true },
+  { name: "Chris", language: "HINDI", mp4: false, upscale: true },
+  { name: "Wesker", language: "HINDI", mp4: false, upscale: true },
+  { name: "Grace", language: "HINDI", mp4: true, upscale: false },
+  { name: "Ashley", language: "VIETNAM", mp4: false, upscale: true },
+];
 
 function normalizeServers(raw) {
   try {
@@ -797,49 +849,16 @@ function updateServersCache(rawList) {
   if (normalized && normalized.length) {
     const changed = JSON.stringify(serversCache.data) !== JSON.stringify(normalized);
     serversCache.data = normalized;
-    serversCache.fetchedAt = Date.now();
     if (changed) console.log(`[servers] list cached (${normalized.length} servers)`);
   }
 }
 
-app.get("/api/servers", async (req, res) => {
-  // Warm cache — served instantly
-  if (serversCache.data && Date.now() - serversCache.fetchedAt < SERVERS_CACHE_TTL) {
+app.get("/api/servers", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  if (serversCache.data) {
     return res.json({ servers: serversCache.data });
   }
-
-  // Cold start: boot one extraction page just far enough for the player to
-  // fetch /main/servers, then harvest and dispose.
-  console.log("[servers] cache cold — booting a page to harvest the list");
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-blink-features=AutomationControlled"],
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 640, height: 360 });
-    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-    page.on("response", async (response) => {
-      try {
-        if (response.url().replace(/[?#].*$/, "").endsWith("/main/servers")) {
-          const body = await response.text();
-          const data = JSON.parse(body);
-          if (Array.isArray(data) && data.length && data[0].name) updateServersCache(data);
-        }
-      } catch {}
-    });
-    await page.goto("https://www.viduki.net/1/movie/0?color=e01621", { waitUntil: "domcontentloaded", timeout: 30000 });
-    const deadline = Date.now() + 25000;
-    while (!serversCache.data && Date.now() < deadline) await sleep(500);
-  } catch (err) {
-    console.error("[servers] harvest failed:", err.message);
-  } finally {
-    if (browser) await browser.close();
-  }
-
-  if (serversCache.data) return res.json({ servers: serversCache.data });
-  return res.status(502).json({ error: "Could not load the server list" });
+  return res.json({ servers: FALLBACK_SERVERS });
 });
 
 
@@ -1262,11 +1281,15 @@ function rewriteDashManifest(text, manifestUrl) {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`✅ WatchAll proxy server running at http://localhost:${PORT} [${BUILD}]`);
-  console.log(
-    `   Media cache: up to ${MAX_CACHE_ENTRIES} objects / ${Math.round(MAX_CACHE_BYTES / (1024 * 1024))} MB`
-  );
-  console.log(`   Keep-alive CDN connections: enabled`);
-  console.log(`   Playlist prefetch: 6 segments ahead`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ WatchAll proxy server running at http://localhost:${PORT} [${BUILD}]`);
+    console.log(
+      `   Media cache: up to ${MAX_CACHE_ENTRIES} objects / ${Math.round(MAX_CACHE_BYTES / (1024 * 1024))} MB`
+    );
+    console.log(`   Keep-alive CDN connections: enabled`);
+    console.log(`   Playlist prefetch: 6 segments ahead`);
+  });
+}
+
+module.exports = app;

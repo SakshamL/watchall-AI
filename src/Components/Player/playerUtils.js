@@ -110,8 +110,10 @@ export function proxyUrl(url, type = "") {
 }
 
 export function streamUrlFor(type, url) {
-  if (type === "mp4") return url;
-  return proxyUrl(url, type);
+  if (import.meta.env.DEV && type !== "mp4") {
+    return proxyUrl(url, type);
+  }
+  return url;
 }
 
 export async function sniffSourceType(url) {
