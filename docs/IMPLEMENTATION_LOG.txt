@@ -201,3 +201,22 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The server now loads without requiring any stealth evasion modules. A local request with an invalid Browserless token returned the clear 401 error instead of the missing-module crash. Backend syntax and lint checks pass.
+
+---
+
+Date: 2026-10-28
+Area: Deployment / Browserless
+
+Issue/Feature:
+After the stealth-plugin fix, Vercel failed again with "require() of ES Module ... puppeteer-core.js ... not supported". The root project used puppeteer-core 25.16.0, which is ESM-only. The Vercel function runs as CommonJS, and its Node runtime could not require that package. Local testing worked because the local Node version supports require() of ES modules.
+
+What changed:
+Pinned the root puppeteer-core dependency to 24.43.1, the latest CommonJS release, so the Vercel function can load it normally. The local development server keeps its existing Puppeteer installation.
+
+Files affected:
+package.json
+package-lock.json
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The server loads and handles a Browserless request under Node 20, which matches the Vercel runtime. With an invalid token it returns the clear 401 error instead of the ES Module error. The production build passes, and backend syntax and lint checks pass.
