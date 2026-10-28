@@ -351,47 +351,69 @@ function sendMedia(req, res, buffer, contentType, extraHeaders = {}) {
 // Viduki hands out URLs for several servers, but a server can answer the API
 // with 200 while its CDN host is down (Cloudflare 522, DNS failure, …). Returning
 // such a URL makes hls.js fail with "stream error" even though the title is
-// playable on another server. Probe each candidate before handing it to the UI.
+// playable on another server.
+//
+// The probe is only a fallback: extraction now primarily trusts the fact that
+// Viduki's own player loaded the manifest successfully inside the browser. When
+// the function runs on a datacenter IP (Vercel) some media hosts answer 520/522
+// even though the same URL plays fine for a normal visitor in another region.
+// Probing such a URL from Vercel used to reject the only correct stream and the
+// request ended with "No playable stream found". Probe failures therefore get a
+// retry and are never allowed to override a stream the browser already loaded.
 
 const PROBE_TIMEOUT = 5000;
+const PROBE_ATTEMPTS = 2;
 
 async function probeStream(url, kind) {
-  try {
-    if (kind === "mp4") {
+  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      if (kind === "mp4") {
+        const res = await axios({
+          method: "GET",
+          url,
+          responseType: "stream",
+          timeout: PROBE_TIMEOUT,
+          headers: { ...CDN_HEADERS, Range: "bytes=0-0" },
+          httpAgent,
+          httpsAgent,
+          validateStatus: (s) => s >= 200 && s < 300,
+        });
+        if (res.data && typeof res.data.destroy === "function") res.data.destroy();
+        return true;
+      }
+
       const res = await axios({
         method: "GET",
         url,
-        responseType: "stream",
+        responseType: "text",
         timeout: PROBE_TIMEOUT,
-        headers: { ...CDN_HEADERS, Range: "bytes=0-0" },
+        headers: CDN_HEADERS,
         httpAgent,
         httpsAgent,
+        maxContentLength: 4 * 1024 * 1024,
         validateStatus: (s) => s >= 200 && s < 300,
       });
-      if (res.data && typeof res.data.destroy === "function") res.data.destroy();
-      return true;
+
+      const body = String(res.data || "");
+      const ok =
+        kind === "hls"
+          ? body.includes("#EXTM3U")
+          : kind === "dash"
+            ? body.includes("<MPD") || body.includes("<mpd")
+            : false;
+      if (ok) return true;
+      if (attempt === PROBE_ATTEMPTS) return false;
+    } catch (err) {
+      if (attempt === PROBE_ATTEMPTS) {
+        console.log(
+          `[probe] ${kind} unreachable (${err.code || err.name}) after ${attempt} attempts: ${String(url).slice(0, 130)}`
+        );
+        return false;
+      }
     }
-
-    const res = await axios({
-      method: "GET",
-      url,
-      responseType: "text",
-      timeout: PROBE_TIMEOUT,
-      headers: CDN_HEADERS,
-      httpAgent,
-      httpsAgent,
-      maxContentLength: 4 * 1024 * 1024,
-      validateStatus: (s) => s >= 200 && s < 300,
-    });
-
-    const body = String(res.data || "");
-    if (kind === "hls") return body.includes("#EXTM3U");
-    if (kind === "dash") return body.includes("<MPD") || body.includes("<mpd");
-    return false;
-  } catch (err) {
-    console.log(`[probe] ${kind} unreachable (${err.code || err.name}): ${String(url).slice(0, 130)}`);
-    return false;
+    await sleep(500);
   }
+  return false;
 }
 
 // ─── 1. EXTRACT — headless Puppeteer finds the stream URL ──────────────────────
@@ -442,6 +464,11 @@ app.get("/api/extract", async (req, res) => {
     );
 
     const candidates = {};          // kind ("hls"|"dash"|"mp4") -> { url, t }
+    // Media URLs the page actually loaded with a 2xx response. This is the
+    // strongest signal that a stream is alive: Viduki's player already fetched
+    // it from inside the browser, so a failed probe from the Vercel region must
+    // not reject it.
+    const browserOk = new Set();
     const srvResponses = new Map(); // srv name -> { t, status } of latest GET /main/movie/<id>?srv=<name>
     let forcedStatus = null;        // latest GET /main/movie status when a server is forced
     let reorderedServers = false;   // /main/servers was rewritten to put HINDI servers first
@@ -497,6 +524,19 @@ app.get("/api/extract", async (req, res) => {
         const entry = requestLog.find((r) => r.url === url && r.status === undefined);
         if (entry) entry.status = status;
         else rememberRequest({ method: "GET", url, type: "response", status });
+
+        // Confirm manifests/media the player really received. HTML challenge
+        // pages served with a 200 status are deliberately not counted.
+        if (status >= 200 && status < 300) {
+          const manifestUrl = /\.(m3u8|mpd)([?#]|$)/i.test(url);
+          const manifestType = ct.includes("mpegurl") || ct.includes("dash+xml");
+          const mp4 = /\.mp4([?#]|$)/i.test(url);
+          const binaryType =
+            ct.startsWith("video/") || ct.includes("octet-stream") || !ct;
+          const isHtml = ct.startsWith("text/html");
+          if ((manifestUrl || manifestType) && !isHtml) browserOk.add(url);
+          else if (mp4 && binaryType && !isHtml) browserOk.add(url);
+        }
 
         // Track per-server API results (GET only — OPTIONS preflights pollute the map).
         // In forced mode every srv request is rewritten to the same server, so the
@@ -685,9 +725,15 @@ app.get("/api/extract", async (req, res) => {
       }
 
       if (!(await probeStream(picked.url, pickedKind))) {
-        return res.status(502).json({
-          error: `Server "${forcedSrv}" returned a stream, but it is not responding right now.`,
-        });
+        // The probe runs from the function's region. If Viduki's player in the
+        // browser already received the manifest, the user can play it too.
+        if (browserOk.has(picked.url)) {
+          console.log("[extract] Forced server probe failed, but the player loaded the stream — returning it");
+        } else {
+          return res.status(502).json({
+            error: `Server "${forcedSrv}" returned a stream, but it is not responding right now.`,
+          });
+        }
       }
     } else {
       console.log("[extract] DEFAULT branch");
@@ -701,7 +747,15 @@ app.get("/api/extract", async (req, res) => {
       let mp4GraceEnd = null;
 
       while (Date.now() < deadline) {
+        // A 2xx response observed inside Viduki's player beats any probe from
+        // the function's own region, so accept it immediately.
         const hls = candidates.hls;
+        if (hls && browserOk.has(hls.url)) {
+          picked = hls;
+          pickedKind = "hls";
+          console.log("[extract] HLS confirmed by the player — accepted without probe");
+          break;
+        }
         if (hls && !badStreams.has(hls.url)) {
           if (await probeStream(hls.url, "hls")) {
             picked = hls;
@@ -713,6 +767,12 @@ app.get("/api/extract", async (req, res) => {
         }
 
         const dash = candidates.dash;
+        if (dash && browserOk.has(dash.url)) {
+          picked = dash;
+          pickedKind = "dash";
+          console.log("[extract] DASH confirmed by the player — accepted without probe");
+          break;
+        }
         if (dash && !badStreams.has(dash.url)) {
           if (await probeStream(dash.url, "dash")) {
             picked = dash;
@@ -724,9 +784,18 @@ app.get("/api/extract", async (req, res) => {
         }
 
         const mp4 = candidates.mp4;
-        if (mp4 && !badStreams.has(mp4.url)) {
+        if (mp4 && browserOk.has(mp4.url)) {
           // MP4-only title: keep listening briefly in case a better format shows up,
-          // then settle for the MP4 instead of failing.
+          // then settle for the MP4 the player already loaded.
+          if (mp4GraceEnd === null) {
+            mp4GraceEnd = Date.now() + 5000;
+          } else if (Date.now() > mp4GraceEnd) {
+            picked = mp4;
+            pickedKind = "mp4";
+            console.log("[extract] MP4 confirmed by the player — accepted without probe");
+            break;
+          }
+        } else if (mp4 && !badStreams.has(mp4.url)) {
           if (mp4GraceEnd === null) {
             mp4GraceEnd = Date.now() + 5000;
           } else if (Date.now() > mp4GraceEnd) {

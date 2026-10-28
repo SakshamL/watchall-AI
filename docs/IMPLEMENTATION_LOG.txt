@@ -220,3 +220,43 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The server loads and handles a Browserless request under Node 20, which matches the Vercel runtime. With an invalid token it returns the clear 401 error instead of the ES Module error. The production build passes, and backend syntax and lint checks pass.
+
+---
+
+Date: 2026-10-28
+Area: Deployment / Stream extraction
+
+Issue/Feature:
+Confirm the Vercel and Browserless extraction pipeline works end to end after the CommonJS Puppeteer fix.
+
+What changed:
+No further code changes were needed.
+
+Files affected:
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+A production request to /api/extract?tmdb=27205&type=movie returned a signed MP4 URL from Sherry. The URL responded with HTTP 200, video/mp4, CORS *, and byte-range support, so the player can stream and seek it directly.
+
+---
+
+Date: 2026-10-28
+Area: Deployment / Stream extraction
+
+Issue/Feature:
+On the Vercel deployment, movie TMDB 1375156 ("Udta Teer") ended with the "No playable stream found" error after a long wait. The same movie worked on the local server, and Viduki's own player also played it. Other movies worked on Vercel.
+
+What changed:
+The extractor used to reject every stream that its own server-side reachability check could not fetch. On Vercel the function runs in a datacenter region (Washington, D.C. by default), and the Hindi CDN host that has the correct copy of this movie intermittently answers Cloudflare 520/522 to datacenter addresses. The local server runs in India, so its check succeeded. Viduki's player inside the browser had already loaded the stream correctly, but the extractor still threw it away and eventually reported that no stream existed.
+
+The extractor now remembers which media files Viduki's player actually loaded with a successful response and accepts those immediately, without depending on the server-side check. The server-side check is still used for streams the browser has not confirmed, now with two attempts instead of one. The manual server-switch path uses the same rule, so switching to the Chris server no longer fails when only the Vercel-side check fails.
+
+The Vercel function region was also set to Mumbai (bom1) so server-side checks run from India, close to the media hosts, instead of the default US region.
+
+Files affected:
+server/index.js
+vercel.json
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The local extraction log for TMDB 1375156 shows Viduki's player loading the Chris HLS stream and the server returning srv=Chris type=hls. The new logic accepts that stream because the browser loaded its manifest successfully. server/index.js passes Node's syntax check and ESLint, and the production build passes. The deployed fix still needs to be redeployed and tested with the same movie on Vercel.
