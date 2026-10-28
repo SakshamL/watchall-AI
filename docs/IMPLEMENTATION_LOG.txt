@@ -183,3 +183,21 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The production build passes. The Vercel function entry file loads correctly, and a local request to its /api/servers endpoint returned 200 with the full ten-server list. Direct CDN playback was verified earlier: the stream responded with the correct CORS header when the browser Referer was present, and segments returned video data. Backend and API code now pass ESLint; the project-wide lint command still reports older unrelated errors in frontend files. The Browserless connection itself has not been tested yet because a Browserless token has not been added.
+
+---
+
+Date: 2026-10-28
+Area: Deployment / Browserless
+
+Issue/Feature:
+The deployed Vercel function failed with "Cannot find module 'puppeteer-extra-plugin-stealth/evasions/chrome.app'". Vercel's serverless bundler does not include the stealth plugin's dynamically loaded evasion files, so the function crashed before it could connect to Browserless.
+
+What changed:
+The stealth plugin is now loaded and applied only when the backend launches a local Chrome browser. On Vercel the backend connects to Browserless's own /stealth endpoint, which already provides anti-detection, so the local plugin is not needed there. Browserless connection errors are also returned with their real reason (for example 401) instead of a generic message, and the token is redacted in logs.
+
+Files affected:
+server/index.js
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The server now loads without requiring any stealth evasion modules. A local request with an invalid Browserless token returned the clear 401 error instead of the missing-module crash. Backend syntax and lint checks pass.

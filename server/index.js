@@ -18,10 +18,9 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 
-// puppeteer-extra + stealth plugin bypasses all major headless detection vectors
+// puppeteer-extra is used with the stealth plugin for local Chrome launches.
+// Browserless provides its own stealth layer when running on Vercel.
 const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -59,6 +58,17 @@ function localLaunchOptions() {
   };
 }
 
+// Browserless's /stealth endpoint already handles anti-detection. The local
+// stealth plugin is only needed when launching Chrome ourselves, and loading
+// its dynamic evasion modules inside a Vercel function breaks the bundle.
+let localStealthApplied = false;
+function applyLocalStealth() {
+  if (localStealthApplied) return;
+  const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+  puppeteer.use(StealthPlugin());
+  localStealthApplied = true;
+}
+
 async function getBrowser() {
   const endpoint = browserlessEndpoint();
   if (endpoint) {
@@ -78,6 +88,7 @@ async function getBrowser() {
       "BROWSERLESS_TOKEN is not configured. Add it in the Vercel project environment variables."
     );
   }
+  applyLocalStealth();
   return puppeteer.launch(localLaunchOptions());
 }
 
