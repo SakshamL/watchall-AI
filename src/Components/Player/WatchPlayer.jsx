@@ -5,7 +5,6 @@ import {
   Maximize,
   Minimize,
   Pause,
-  PictureInPicture2,
   Play,
   RotateCcw,
   RotateCw,
@@ -30,10 +29,13 @@ import {
   readStore,
   removeStore,
   resumeKey,
+  serverDisplayName,
   writeStore,
 } from "./playerUtils";
 import { usePlaybackEngine } from "./usePlaybackEngine";
 import "./player.css";
+
+const TOP_EDGE_GUARD = 48;
 
 const focusableIn = (root) => {
   if (!root) return [];
@@ -91,6 +93,7 @@ export default function WatchPlayer({
   sourceError,
   loadingMessage,
   metadata,
+  originalLanguage = "",
   mediaId,
   initialTime = 0,
   servers = [],
@@ -99,6 +102,9 @@ export default function WatchPlayer({
   switchingServer,
   onSelectServer,
   onRetrySource,
+  onTryOtherSource,
+  otherSourceLabel = "",
+  bothSourcesFailed = false,
   onBack,
   onFatalPlaybackError,
   notice,
@@ -109,6 +115,7 @@ export default function WatchPlayer({
     initialTime,
     profile,
     mediaId,
+    originalLanguage,
     onFatalError: onFatalPlaybackError,
   });
   const {
@@ -142,16 +149,23 @@ export default function WatchPlayer({
   const flashTimerRef = useRef(null);
   const toastTimerRef = useRef(null);
   const tapTimerRef = useRef(null);
+  const mouseTapTimerRef = useRef(null);
   const gestureTimerRef = useRef(null);
   const gestureRef = useRef(null);
+  const loadingStartRef = useRef(0);
+  const wasLoadingRef = useRef(false);
+  const autoFullscreenTriedRef = useRef(false);
   const lastTapRef = useRef({ time: 0, side: "" });
   const settingsReturnFocusRef = useRef(null);
   const helpReturnFocusRef = useRef(null);
+  const errorCardRef = useRef(null);
+  const errorPrimaryRef = useRef(null);
   const tvFocusedRef = useRef(false);
   const brightnessRef = useRef(1);
   const uiVisibleRef = useRef(true);
   const settingsOpenRef = useRef(false);
   const helpOpenRef = useRef(false);
+  const errorOpenRef = useRef(false);
   const isPlayingRef = useRef(false);
 
   const [uiVisible, setUiVisible] = useState(true);
@@ -167,7 +181,7 @@ export default function WatchPlayer({
   const [gestureHud, setGestureHud] = useState(null);
   const [brightness, setBrightness] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isPip, setIsPip] = useState(false);
+  const [loadingElapsed, setLoadingElapsed] = useState(0);
 
   const isPlaying = snapshot.status === "playing";
   const isEnded = snapshot.status === "ended";
@@ -181,6 +195,15 @@ export default function WatchPlayer({
           retry: true,
         }
       : null);
+  const sourceFailure =
+    sourceFatal || (!source && !sourceLoading);
+  const errorVisible = Boolean(fatalError);
+  const canTryOtherSource = Boolean(onTryOtherSource && otherSourceLabel);
+  const preferOtherSource =
+    sourceFailure && canTryOtherSource && !bothSourcesFailed;
+  const tryOtherLabel = otherSourceLabel
+    ? `Try ${otherSourceLabel}${bothSourcesFailed ? " again" : ""}`
+    : "";
   const preparing = sourceLoading || (!source && !sourceFatal);
   const loadingVisible =
     !fatalError && (preparing || snapshot.status === "loading");
@@ -216,9 +239,39 @@ export default function WatchPlayer({
       snapshot.status === "idle" ||
       snapshot.autoplayBlocked);
 
+  useEffect(() => {
+    if (!loadingVisible) {
+      wasLoadingRef.current = false;
+      setLoadingElapsed(0);
+      return undefined;
+    }
+    if (!wasLoadingRef.current) {
+      wasLoadingRef.current = true;
+      loadingStartRef.current = Date.now();
+      setLoadingElapsed(0);
+    }
+    const tick = () =>
+      setLoadingElapsed(
+        Math.max(0, Math.floor((Date.now() - loadingStartRef.current) / 1000))
+      );
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [loadingVisible]);
+
+  const loadingPhase =
+    loadingElapsed >= 40
+      ? "Finishing up"
+      : loadingElapsed >= 20
+        ? "Verifying playback"
+        : loadingElapsed >= 8
+          ? "Finding the best stream"
+          : "Checking available servers";
+
   uiVisibleRef.current = uiVisible;
   settingsOpenRef.current = settingsOpen;
   helpOpenRef.current = helpOpen;
+  errorOpenRef.current = errorVisible;
   isPlayingRef.current = isPlaying;
   brightnessRef.current = brightness;
 
@@ -301,6 +354,7 @@ export default function WatchPlayer({
       clearTimeout(flashTimerRef.current);
       clearTimeout(toastTimerRef.current);
       clearTimeout(tapTimerRef.current);
+      clearTimeout(mouseTapTimerRef.current);
       clearTimeout(gestureTimerRef.current);
     },
     []
@@ -357,6 +411,17 @@ export default function WatchPlayer({
     announce(willTurnOn ? "Subtitles on" : "Subtitles off");
     showUi();
   }, [announce, showUi, snapshot.textTrack, toggleCaptions]);
+
+  const handleRetryAction = useCallback(() => {
+    if (serverIsBusy) return;
+    if (sourceFailure && onRetrySource) onRetrySource();
+    else retry();
+  }, [onRetrySource, retry, serverIsBusy, sourceFailure]);
+
+  const handleTryOtherSource = useCallback(() => {
+    if (serverIsBusy || !onTryOtherSource) return;
+    onTryOtherSource();
+  }, [onTryOtherSource, serverIsBusy]);
 
   const handleSeek = useCallback(
     (value) => {
@@ -464,46 +529,84 @@ export default function WatchPlayer({
     ]
   );
 
+  const enterPlayerFullscreen = useCallback(
+    async (silent = false) => {
+      const root = rootRef.current;
+      const video = videoRef.current;
+      try {
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          return true;
+        }
+        if (profile.isIOS && video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          return true;
+        }
+        if (root?.requestFullscreen) {
+          await root.requestFullscreen();
+          return true;
+        }
+        if (root?.webkitRequestFullscreen) {
+          root.webkitRequestFullscreen();
+          return true;
+        }
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          return true;
+        }
+        if (!silent) showToast("Fullscreen is not supported on this device.");
+        return false;
+      } catch {
+        if (!silent) showToast("Fullscreen is not available right now.");
+        return false;
+      }
+    },
+    [profile.isIOS, showToast, videoRef]
+  );
+
   const toggleFullscreen = useCallback(async () => {
-    const root = rootRef.current;
-    const video = videoRef.current;
-    try {
-      if (document.fullscreenElement || document.webkitFullscreenElement) {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      try {
         if (document.exitFullscreen) await document.exitFullscreen();
         else document.webkitExitFullscreen?.();
-        return;
+      } catch {
+        showToast("Could not exit fullscreen right now.");
       }
-      if (profile.isIOS && video?.webkitEnterFullscreen) {
-        video.webkitEnterFullscreen();
-        return;
-      }
-      if (root?.requestFullscreen) {
-        await root.requestFullscreen();
-      } else if (root?.webkitRequestFullscreen) {
-        root.webkitRequestFullscreen();
-      } else if (video?.webkitEnterFullscreen) {
-        video.webkitEnterFullscreen();
-      } else {
-        showToast("Fullscreen is not supported on this device.");
-      }
-    } catch {
-      showToast("Fullscreen is not available right now.");
+      return;
     }
-  }, [profile.isIOS, showToast, videoRef]);
+    await enterPlayerFullscreen(false);
+  }, [enterPlayerFullscreen, showToast]);
 
-  const togglePip = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video) return;
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else if (video.requestPictureInPicture) {
-        await video.requestPictureInPicture();
+  useEffect(() => {
+    if (!profile.isTV || autoFullscreenTriedRef.current) return undefined;
+    if (snapshot.status !== "playing") return undefined;
+    let active = true;
+    const cleanup = () => {
+      window.removeEventListener("pointerdown", attempt, true);
+      window.removeEventListener("keydown", attempt, true);
+    };
+    const attempt = () => {
+      if (!active || autoFullscreenTriedRef.current) return;
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        autoFullscreenTriedRef.current = true;
+        cleanup();
+        return;
       }
-    } catch {
-      showToast("Picture-in-picture is not available right now.");
-    }
-  }, [showToast, videoRef]);
+      enterPlayerFullscreen(true).then((entered) => {
+        if (entered) {
+          autoFullscreenTriedRef.current = true;
+          cleanup();
+        }
+      });
+    };
+    const timer = window.setTimeout(attempt, 260);
+    window.addEventListener("pointerdown", attempt, true);
+    window.addEventListener("keydown", attempt, true);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      cleanup();
+    };
+  }, [enterPlayerFullscreen, profile.isTV, snapshot.status]);
 
   useEffect(() => {
     const sync = () =>
@@ -532,19 +635,6 @@ export default function WatchPlayer({
       screen.orientation?.unlock?.();
     };
   }, [isFullscreen, profile.isMobile]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return undefined;
-    const enter = () => setIsPip(true);
-    const leave = () => setIsPip(false);
-    video.addEventListener("enterpictureinpicture", enter);
-    video.addEventListener("leavepictureinpicture", leave);
-    return () => {
-      video.removeEventListener("enterpictureinpicture", enter);
-      video.removeEventListener("leavepictureinpicture", leave);
-    };
-  }, [videoRef]);
 
   useEffect(() => {
     if (!resumedFrom || !mediaId) return;
@@ -799,18 +889,77 @@ export default function WatchPlayer({
     return () => document.removeEventListener("keydown", trap, true);
   }, [helpOpen]);
 
+  useEffect(() => {
+    if (!errorVisible) return;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+  }, [errorVisible]);
+
+  useEffect(() => {
+    if (!errorVisible || settingsOpen || helpOpen || serverIsBusy) {
+      return undefined;
+    }
+    const frame = requestAnimationFrame(() => {
+      errorPrimaryRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [errorVisible, helpOpen, serverIsBusy, settingsOpen]);
+
+  useEffect(() => {
+    if (!errorVisible || settingsOpen || helpOpen) return undefined;
+    const container = errorCardRef.current;
+    if (!container) return undefined;
+    const trap = (event) => {
+      if (event.key !== "Tab") return;
+      const nodes = focusableIn(container);
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (
+        event.shiftKey &&
+        (document.activeElement === first ||
+          !container.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last ||
+          !container.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trap, true);
+    return () => document.removeEventListener("keydown", trap, true);
+  }, [errorVisible, helpOpen, settingsOpen]);
+
   const moveFocus = useCallback((direction) => {
     const container = settingsOpenRef.current
       ? settingsRef.current
-      : rootRef.current;
+      : errorOpenRef.current
+        ? errorCardRef.current
+        : rootRef.current;
     const nodes = focusableIn(container);
     if (!nodes.length) return false;
     const active = document.activeElement;
     if (!container?.contains(active) || !nodes.includes(active)) {
-      const fallback = settingsOpenRef.current
-        ? nodes[0]
-        : playBtnRef.current || nodes[0];
+      const fallback =
+        settingsOpenRef.current || errorOpenRef.current
+          ? nodes[0]
+          : playBtnRef.current || nodes[0];
       fallback?.focus({ preventScroll: true });
+      return true;
+    }
+    if (errorOpenRef.current && !settingsOpenRef.current) {
+      const step = direction === "down" || direction === "right" ? 1 : -1;
+      const index = nodes.indexOf(active);
+      const next = nodes[Math.max(0, Math.min(nodes.length - 1, index + step))];
+      if (next) {
+        next.focus({ preventScroll: true });
+        next.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      }
       return true;
     }
     const rect = active.getBoundingClientRect();
@@ -860,7 +1009,6 @@ export default function WatchPlayer({
     openHelp,
     closeHelp,
     toggleFullscreen,
-    togglePip,
     toggleMute: handleToggleMute,
     toggleCaptions: handleToggleCaptions,
     back: onBack,
@@ -932,6 +1080,19 @@ export default function WatchPlayer({
         } else if (code === 19 || key === "Pause") {
           event.preventDefault();
           actions.pause();
+        }
+        return;
+      }
+
+      if (errorOpenRef.current) {
+        if (isBack) {
+          event.preventDefault();
+          actions.back();
+          return;
+        }
+        if (isArrow && !isInput) {
+          event.preventDefault();
+          moveFocus(key.replace("Arrow", "").toLowerCase());
         }
         return;
       }
@@ -1063,11 +1224,6 @@ export default function WatchPlayer({
           event.preventDefault();
           actions.toggleFullscreen();
         }
-      } else if (key === "p" || key === "P") {
-        if (!event.repeat && profile.supportsPip) {
-          event.preventDefault();
-          actions.togglePip();
-        }
       } else if (key === "?" || (key === "/" && event.shiftKey)) {
         event.preventDefault();
         actions.openHelp();
@@ -1088,7 +1244,7 @@ export default function WatchPlayer({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moveFocus, profile.isTV, profile.supportsPip, videoRef]);
+  }, [moveFocus, profile.isTV, videoRef]);
 
   const handleGesturePointerDown = (event) => {
     // Remember whether the controls were already visible before this tap.
@@ -1097,6 +1253,19 @@ export default function WatchPlayer({
     const startedUiVisible = uiVisibleRef.current;
     if (event.pointerType === "mouse") {
       showUi();
+      return;
+    }
+    const style = window.getComputedStyle(event.currentTarget);
+    const safeTop = Number.parseFloat(style.getPropertyValue("--wa-safe-top")) || 0;
+    const topGuard = Math.max(TOP_EDGE_GUARD, safeTop + 16);
+    if (event.clientY <= topGuard) {
+      // Leave the top edge alone so the device can reveal its status bar or
+      // notification shade. Do not capture this pointer.
+      gestureRef.current = {
+        pointerId: event.pointerId,
+        ignored: true,
+        startedUiVisible,
+      };
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1113,12 +1282,16 @@ export default function WatchPlayer({
       moved: false,
     };
     gestureRef.current.element = event.currentTarget;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Synthetic events and some TV browsers do not support pointer capture.
+    }
   };
 
   const handleGesturePointerMove = (event) => {
     const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.ignored) return;
     const dx = event.clientX - gesture.startX;
     const dy = event.clientY - gesture.startY;
     // Any real movement means this is a swipe, not a tap. Without this, a
@@ -1160,17 +1333,29 @@ export default function WatchPlayer({
   const handleGesturePointerUp = (event) => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    if (gesture?.mode) {
+    if (event.pointerType === "mouse") {
+      // Delay the single-click play toggle briefly so a double-click can
+      // become fullscreen without play/pause flickering twice.
+      clearTimeout(mouseTapTimerRef.current);
+      mouseTapTimerRef.current = window.setTimeout(() => {
+        mouseTapTimerRef.current = null;
+        handleTogglePlay();
+      }, 230);
+      return;
+    }
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (gesture.ignored) return;
+    try {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // Ignore capture released by the browser or unsupported capture.
+    }
+    if (gesture.mode) {
       clearTimeout(gestureTimerRef.current);
       gestureTimerRef.current = setTimeout(() => setGestureHud(null), 650);
       return;
     }
-    if (gesture?.moved) return;
-    if (event.pointerType === "mouse") {
-      handleTogglePlay();
-      return;
-    }
+    if (gesture.moved) return;
     const now = Date.now();
     const side =
       event.clientX < window.innerWidth * 0.35
@@ -1208,6 +1393,14 @@ export default function WatchPlayer({
     }
   };
 
+  const handleGestureDoubleClick = (event) => {
+    if (!profile.isDesktop) return;
+    event.preventDefault();
+    clearTimeout(mouseTapTimerRef.current);
+    mouseTapTimerRef.current = null;
+    toggleFullscreen();
+  };
+
   const volumeIcon =
     snapshot.muted || snapshot.volume === 0 ? (
       <VolumeX size={22} />
@@ -1231,7 +1424,6 @@ export default function WatchPlayer({
     ["M", "Mute or unmute"],
     ["F", "Fullscreen"],
     ["C", "Subtitles"],
-    ["P", "Picture-in-picture"],
     ["0–9", "Jump to percentage"],
     ["?", "Show shortcuts"],
     ["Esc / Back", "Close menu or hide controls"],
@@ -1264,6 +1456,7 @@ export default function WatchPlayer({
         ref={videoRef}
         className="wa-video"
         playsInline
+        disablePictureInPicture
         preload="metadata"
         tabIndex={-1}
         aria-label={metadata?.title ? `Video player for ${metadata.title}` : "Video player"}
@@ -1277,7 +1470,10 @@ export default function WatchPlayer({
         onPointerMove={handleGesturePointerMove}
         onPointerUp={handleGesturePointerUp}
         onPointerCancel={handleGesturePointerCancel}
+        onDoubleClick={handleGestureDoubleClick}
       />
+
+      <div className="wa-edge-guard" aria-hidden="true" />
 
       <div className="wa-scrim wa-scrim-top" />
       <div className="wa-scrim wa-scrim-bottom" />
@@ -1314,7 +1510,9 @@ export default function WatchPlayer({
           className="wa-server-chip"
           onClick={openSettings}
           aria-label={
-            activeServer ? `Stream server: ${activeServer}` : "Choose stream server"
+            activeServer
+              ? `Stream server: ${serverDisplayName(activeServer)}`
+              : "Choose stream server"
           }
           title="Stream server"
           data-focusable="true"
@@ -1326,8 +1524,8 @@ export default function WatchPlayer({
           )}
           <span className="wa-server-chip-label">
             {serverIsBusy
-              ? `Switching to ${switchingServer}…`
-              : activeServer || "Servers"}
+              ? `Switching to ${serverDisplayName(switchingServer)}…`
+              : serverDisplayName(activeServer) || "Servers"}
           </span>
         </button>
       </div>
@@ -1344,9 +1542,25 @@ export default function WatchPlayer({
           ) : null}
           <div className="wa-loading-scrim" />
           <div className="wa-loading-content">
-            <div className="wa-loader-ring" aria-hidden="true" />
             <h2>{title}</h2>
-            <p>{loadingMessage || "Finding a working stream…"}</p>
+            <p className="wa-loading-message">
+              {loadingMessage || "Getting your stream ready…"}
+            </p>
+            <div className="wa-loading-meter" aria-hidden="true">
+              <span />
+            </div>
+            <div className="wa-loading-status" aria-live="off">
+              <span className="wa-loading-phase">{loadingPhase}</span>
+              <span className="wa-loading-separator" aria-hidden="true">·</span>
+              <span className="wa-loading-timer" aria-hidden="true">
+                {loadingElapsed}s
+              </span>
+            </div>
+            <p className="wa-loading-note" aria-live="off">
+              {loadingElapsed >= 45
+                ? "Taking longer than usual — you can wait or try another server."
+                : "This can take up to a minute."}
+            </p>
             <button
               type="button"
               className="wa-text-btn"
@@ -1360,25 +1574,66 @@ export default function WatchPlayer({
       ) : null}
 
       {!loadingVisible && fatalError ? (
-        <div className="wa-state wa-error" role="alert">
-          <div className="wa-error-card">
+        <div
+          className="wa-state wa-error"
+          role="alert"
+          aria-labelledby="wa-error-title"
+          aria-describedby="wa-error-message"
+        >
+          <div ref={errorCardRef} className="wa-error-card">
             <span className="wa-error-icon" aria-hidden="true">
               <X size={30} />
             </span>
-            <h2>{fatalError.title}</h2>
-            <p>{fatalError.message}</p>
+            <h2 id="wa-error-title">{fatalError.title}</h2>
+            <p id="wa-error-message">{fatalError.message}</p>
             <div className="wa-error-actions">
-              <button
-                type="button"
-                className="wa-primary-btn"
-                onClick={() => {
-                  if (sourceError && onRetrySource) onRetrySource();
-                  else retry();
-                }}
-                data-focusable="true"
-              >
-                Try again
-              </button>
+              {preferOtherSource ? (
+                <>
+                  <button
+                    ref={errorPrimaryRef}
+                    type="button"
+                    className="wa-primary-btn"
+                    onClick={handleTryOtherSource}
+                    disabled={serverIsBusy}
+                    data-focusable="true"
+                  >
+                    {tryOtherLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="wa-secondary-btn"
+                    onClick={handleRetryAction}
+                    disabled={serverIsBusy}
+                    data-focusable="true"
+                  >
+                    Try again
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    ref={errorPrimaryRef}
+                    type="button"
+                    className="wa-primary-btn"
+                    onClick={handleRetryAction}
+                    disabled={serverIsBusy}
+                    data-focusable="true"
+                  >
+                    Try again
+                  </button>
+                  {canTryOtherSource ? (
+                    <button
+                      type="button"
+                      className="wa-secondary-btn"
+                      onClick={handleTryOtherSource}
+                      disabled={serverIsBusy}
+                      data-focusable="true"
+                    >
+                      {tryOtherLabel}
+                    </button>
+                  ) : null}
+                </>
+              )}
               <button
                 type="button"
                 className="wa-secondary-btn"
@@ -1390,17 +1645,23 @@ export default function WatchPlayer({
               </button>
               <button
                 type="button"
-                className="wa-secondary-btn"
+                className="wa-secondary-btn wa-error-back"
                 onClick={onBack}
                 data-focusable="true"
               >
                 Go back
               </button>
             </div>
+            {bothSourcesFailed && !serverIsBusy ? (
+              <p className="wa-error-note">
+                Both server lists were tried. Try again, choose a specific
+                server, or go back.
+              </p>
+            ) : null}
             {serverIsBusy ? (
               <p className="wa-error-note">
                 <Loader2 size={15} className="wa-spin" /> Switching to{" "}
-                {switchingServer}…
+                {serverDisplayName(switchingServer)}…
               </p>
             ) : null}
           </div>
@@ -1464,12 +1725,13 @@ export default function WatchPlayer({
       ) : null}
 
       {!loadingVisible && !fatalError && !isEnded ? (
-        <div className="wa-controls wa-chrome">
+        <div className="wa-controls">
           <div
             className="wa-bottom"
             onPointerEnter={() => setHoverChrome(true)}
             onPointerLeave={() => setHoverChrome(false)}
           >
+            <div className="wa-controls-inner">
             <PlayerTimeline
               currentTime={timelineCurrent}
               duration={timelineDuration}
@@ -1614,20 +1876,6 @@ export default function WatchPlayer({
                   <Settings size={22} />
                 </button>
 
-                {profile.supportsPip ? (
-                  <button
-                    type="button"
-                    className="wa-icon-btn"
-                    onClick={togglePip}
-                    aria-label="Picture in picture"
-                    aria-pressed={isPip}
-                    title="Picture in picture"
-                    data-focusable="true"
-                  >
-                    <PictureInPicture2 size={22} />
-                  </button>
-                ) : null}
-
                 {!profile.isTV ? (
                   <button
                     type="button"
@@ -1641,6 +1889,7 @@ export default function WatchPlayer({
                   </button>
                 ) : null}
               </div>
+            </div>
             </div>
           </div>
         </div>

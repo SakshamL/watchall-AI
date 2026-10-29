@@ -299,3 +299,241 @@ docs/IMPLEMENTATION_LOG.txt
 
 Verified:
 The changed player file passes ESLint and the production build passes. The gesture logic was reviewed for taps, vertical swipes, horizontal swipes, normal release, and cancelled pointers. It has not yet been tested on a physical phone.
+
+---
+
+Date: 2026-10-28
+Area: Video player (audio tracks)
+
+Issue/Feature:
+A single stream can contain more than one audio language, but the player always started with the stream's default track. A Hindi movie could therefore start in Tamil or Telugu even when a Hindi track was available. The settings sheet also hid the Audio section completely when the stream did not expose alternate tracks, so users could not tell whether the feature existed.
+
+What changed:
+The settings sheet now always shows an Audio section. While the stream is loading it says the tracks will appear after loading; when there are no alternate tracks it says so; when there are multiple tracks it lists them and marks the active one. The movie's original language from TMDB is now passed from the video page into the player. When a stream loads with multiple audio tracks, the player automatically selects the track that matches the movie's original language, such as Hindi for a Hindi movie. The user can still switch to any other track manually, and automatic selection does not override that manual choice until a different stream or server is loaded.
+
+Files affected:
+src/Components/Player/playerUtils.js
+src/Components/Player/usePlaybackEngine.js
+src/Components/Player/PlayerSettings.jsx
+src/Components/Player/WatchPlayer.jsx
+src/Pages/VideoPlayer.jsx
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The changed files pass ESLint and the production build passes. The language matching helper was tested with Hindi, English, Tamil, Telugu, and Chinese labels and codes, including the false-positive case where "Chinese" contains the letters "hi". The automatic selection path has not yet been tested with a real multi-audio stream on a device.
+
+---
+
+Date: 2026-10-28
+Area: Standalone stream extractor
+
+Issue/Feature:
+A separate, single-file stream extractor was requested. It had to accept any public page URL or direct video URL, find the raw stream the way the Viduki extractor does, and play the result in the same page. It had to be independent of the WatchAll pages and source code.
+
+What changed:
+A new file named standalone-stream-extractor.cjs was added to the project root. The file is self-contained: it starts its own web server on 127.0.0.1:4599, serves one complete HTML page with all styling and JavaScript inside the file, and provides its own extraction and playback endpoints. It does not import or link to any WatchAll page or component.
+
+The page accepts a URL, a wait time, an optional Referer, a stream-check option, and a local-proxy option. For a direct .m3u8, .mpd or video-file URL it returns the URL immediately. For a normal web page it opens a private headless browser, watches the network for HLS playlists, DASH manifests and video files, tries to start the page's own player, and returns the raw stream URL plus every candidate it found. The selected stream is shown in a raw-URL box, can be copied or opened, and plays inside the page. HLS uses hls.js, DASH uses dash.js, and ordinary video files use the browser's built-in player. The local proxy rewrites playlists and forwards byte ranges, so playback avoids cross-origin and hotlink blocking. Chrome, Chromium, Edge or a Browserless token can be used. The file was also added to .gitignore so it stays outside version control.
+
+Files affected:
+standalone-stream-extractor.cjs
+.gitignore
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The file passes Node syntax checking and ESLint. The server started and reported Chrome correctly. A direct HLS URL returned itself without a browser. The W3Schools video page was opened in a real headless browser and its MP4 stream was found. The hls.js demo page was opened and three HLS candidates were found, with the 1080p playlist selected. The built-in proxy rewrote a live HLS master playlist, a nested HLS playlist, a DASH manifest, MP4 range requests and DASH segment requests correctly. Finally, the full UI was driven in a headless browser: the page URL was entered, extraction finished, the raw URL appeared, and the video reached a playable state with no page errors.
+
+---
+
+Date: 2026-10-28
+Area: Standalone stream extractor (iframe embeds and click-to-play)
+
+Issue/Feature:
+Some video links only start after a click, and some links are supplied as an iframe embed tag, such as a VidNest movie iframe. Opening the iframe address by itself showed a blank page, so the extractor found only an unconfirmed ad-like playlist.
+
+What changed:
+The extractor now accepts an iframe tag directly. For an iframe input it opens the embed inside a small local wrapper page instead of opening the iframe address on its own. That keeps the embedded browser context the site expects, so the player loads normally. Ordinary URLs are still opened top-level as before.
+
+The extractor now tries to start playback automatically. It hovers over the player, clicks real play buttons, paused videos, the largest iframe or the player area with trusted mouse clicks, and skips visible skip-ad buttons. It does not click again while a video is already playing, and it stops after a small number of attempts. It keeps trying until it sees a confirmed stream that is not ad-like. HLS master playlists are now preferred over single-quality playlists, image-like ad playlists are ranked last, and the VidNest CDN link is no longer falsely marked as an ad. The page now accepts iframe tags, shows how many automatic clicks were made, and explains unconfirmed or ad-like results.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The VidNest iframe example (https://vidnest.fun/movie/324857) was pasted into the page as an iframe tag. Extraction found the confirmed HLS master playlist and the built-in player played the movie. The player showed 0:06 / 1:56:48, the Sony logo, 1280x523 video, 156 decoded frames, and no console or player errors. The local proxy returned the master playlist with HTTP 200 and rewrote its variant playlists correctly. The W3Schools video page still found its MP4, and the hls.js demo page still found and started its HLS stream. The file passes Node syntax checking and ESLint.
+
+---
+
+Date: 2026-10-28
+Area: Standalone stream extractor (bare embed-host links)
+
+Issue/Feature:
+A VidNest link entered as a normal URL, such as https://vidnest.fun/movie/1007946, still failed. The embed mode only worked when the link was pasted as an iframe tag.
+
+What changed:
+VidNest links are now recognized as embed-only links and are opened inside the local embed wrapper automatically, even when entered as a normal URL. As a general fallback, if a normal page extraction fails or finds only unconfirmed or ad-like streams, the extractor now retries that page inside the local embed wrapper. If the page redirects itself to a blank tab, the first attempt stops early instead of waiting the full time. The result badges now show when embed mode was used.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The bare link https://vidnest.fun/movie/1007946 was entered in the page. Extraction completed in about 21 seconds, found the confirmed movie file, and the built-in player played it. The player showed 1280x544 video, a duration of about 1:47:58, 68 decoded frames, the film certification screen, and no player errors. The previous VidNest movie still works through embed mode, and the file passes Node syntax checking and ESLint.
+
+---
+
+Date: 2026-10-28
+Area: Standalone stream extractor (HEVC video on Edge)
+
+Issue/Feature:
+The VidNest link https://vidnest.fun/movie/872906 extracted a valid Matroska movie, but in Microsoft Edge the player played only the audio and showed a black picture. The file uses HEVC/H.265 video. Edge on this machine cannot decode HEVC at all, and an HEVC test MP4 also failed, so the container was not the cause. Chrome on the same machine played the file normally.
+
+What changed:
+The extractor now checks whether a playing video has visible video frames. If audio is playing but the video width stays at zero, it shows a clear warning that the browser cannot decode the video codec, usually HEVC/H.265. It also explains that the stream is fine and only the browser is missing the decoder.
+
+A new Chrome button sits next to the raw stream URL. It asks the local extractor server to open the stream in a separate Chrome window. The server opens its own small player page and uses the existing local proxy, so file streams, HLS and DASH all work in that window. The player page has its own play controls and error message. The server only accepts the request from the extractor page itself and only opens its own local player page, not an arbitrary address. The bundled Chrome from the local browser cache is preferred, so HEVC playback works without installing anything.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+In Edge, https://vidnest.fun/movie/872906 was extracted, audio played, the warning appeared, and the Chrome button was enabled. Clicking the button started Chrome and the page reported that the stream was opened. The new player page was tested directly in Chrome with the same HEVC file: it reached a ready state of 4, showed 1280x536 video and played normally. The same player page was tested with the previous HLS movie and played 1920x784 video with no errors. A W3Schools MP4 still played in Edge with 320x176 video and no false warning. The Chrome tool still played the HEVC movie and the previous HLS movie. Cross-site requests to the new Chrome endpoint were rejected, an invalid media URL was rejected, and the file passes Node syntax checking and ESLint.
+
+---
+
+Date: 2026-10-28
+Area: Standalone stream extractor (full WatchAll player)
+
+Issue/Feature:
+The standalone extractor still used a small built-in player, but the request was to use the same full WatchAll video player as the main project. The player had to stay completely separate from the WatchAll project: no project pages, routes or source files would be linked or changed, and the standalone file had to stay usable on its own.
+
+What changed:
+The main WatchAll player components were copied into a temporary build folder and bundled into one independent JavaScript file and one CSS file. The bundle contains the player, its controls, timeline, settings panel, React, HLS.js, DASH support and icons. It exposes one small global object named WatchAllPlayer and does not import anything from the running WatchAll project.
+
+The player files are compressed and embedded directly inside standalone-stream-extractor.cjs as text. The extractor server now sends them from the local /standalone-player.js and /standalone-player.css addresses. The page loads those two addresses and adds a full-screen player overlay. Extracting a stream, choosing a candidate, or pressing the new Open player button now opens the full player. Closing the player returns to the extractor page, and the old simple player remains as an automatic fallback if the player bundle cannot load.
+
+The player uses the existing local proxy and Referer when the proxy option is enabled. HLS and DASH keep their types, while ordinary files are treated as normal video. The existing HEVC warning and Chrome fallback button were moved inside the full player as a banner, so HEVC audio-only playback is still explained and can still be opened in Chrome. Closing the player unmounts it safely, restores page scrolling and leaves the current stream ready to reopen.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The full player was tested in Chrome with a W3Schools MP4: it reached ready state 4, showed 320x176 video and 250 frames, and the back button closed the overlay and unlocked the page. The VidNest HLS movie (324857) played at 1280x523 with 2625 frames, controls, timeline, settings, quality list and no console errors. In Edge, the HEVC movie (872906) showed the audio-only banner with the Play in Chrome button; clicking it reported that the stream was opened in Chrome. In Chrome, the same HEVC movie played at 1280x536 with 2552 frames and showed no warning. A public DASH test movie played through the same player at 3840x2160 with 1392 frames. Selecting a candidate reopened the full player and played 1280x523 video. With the player script deliberately blocked, the old inline player still played the W3Schools MP4 at 320x176. The Open player button, proxy on/off switch and close/reopen flow were tested, and the file passes Node syntax checking and ESLint.
+
+---
+
+Date: 2026-10-29
+Area: Movie playback (server list selection and Vidnest integration)
+
+Issue/Feature:
+The movie details page had one PLAY NOW button that always used the Viduki extractor. The working Vidnest extractor from the standalone tool needed to be available in the main app. Clicking PLAY NOW had to ask the user which server list to use: Server List 1 (Viduki) or Server List 2 (Vidnest). The choice had to start the right extraction, and the same choice had to work later from inside the player. The screens had to stay usable on phones, laptops and TV devices, including keyboard and remote navigation.
+
+What changed:
+The movie details page now opens a server picker when PLAY NOW is pressed. It is a proper dialog with two large choices, a title, short explanations, a close button, Escape support, backdrop closing, arrow-key movement, Home/End support, focus trapping and focus restored to PLAY NOW after closing. On phones it becomes a bottom sheet; on very large TV screens the text and buttons grow. The chosen list is passed to the watch page as a source value.
+
+The watch page now understands this source value. Server List 1 keeps the existing Viduki behavior, including automatically trying the other Viduki servers when one fails. Server List 2 asks the backend for a Vidnest stream. The in-player server sheet now shows both lists with headings, so a viewer can switch from one list to the other at any time without going back. While Vidnest is loading, the player explains that fetching can take up to a minute. Switching from Vidnest to Viduki still honors the exact Viduki server that was picked, and switching back to Vidnest updates the page address so a reload keeps the same source.
+
+The backend gained a Vidnest extraction module copied from the standalone tool. It validates the numeric TMDB id, opens Vidnest inside a small own wrapper page because the site only plays inside an embed, watches the network for a confirmed non-ad media stream, and returns the stream with its type and Referer. Repeated requests for the same title share one browser run, and successful results are cached. The wrapper route only accepts Vidnest addresses. The proxy now accepts and forwards a Referer for playlists and segments, because Vidnest segments are images with no cross-origin permission and must be proxied in production. Vidnest results are marked to force the proxy in every environment. No changes were made to the standalone extractor file.
+
+Files affected:
+server/vidnest-extractor.cjs (new)
+server/index.js
+src/Components/SourceSelectModal.jsx (new)
+src/Components/SourceSelectModal.css (new)
+src/Pages/Movies.jsx
+src/Pages/VideoPlayer.jsx
+src/Components/Player/PlayerSettings.jsx
+src/Components/Player/player.css
+src/Components/Player/playerUtils.js
+src/Components/Player/usePlaybackEngine.js
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+Both server files pass Node syntax checking and the production build passes. ESLint reports no errors in the new or changed files; the only two messages are old hook-dependency warnings in Movies.jsx that were already there. The live API returned a confirmed Vidnest HLS stream for movie 324857 (about 27 seconds on a cold run, instant on the cache hit), and a Viduki stream still returned normally. The wrapper page loaded with status 200 and rejected a non-Vidnest address with status 400. The Vidnest master playlist, its variant playlist and a segment all passed through the app proxy with status 200, and the segment kept its PNG content type. The full flow was driven in headless Chrome: PLAY NOW opened the dialog, ArrowDown moved focus, Escape closed it and returned focus, the phone-sized dialog fit without horizontal scrolling, choosing Vidnest opened the player and played a 1:56:48 stream with video, and the server sheet showed both group headings. Switching from Vidnest to the Leon Viduki server and back to Vidnest both played successfully. A cold Vidnest selection showed the "Fetching the movie from Vidnest" message while loading and then played at 1920x784 with no page errors. Physical phones and TV hardware were not tested.
+
+---
+
+Date: 2026-10-29
+Area: Player experience and server-list privacy
+
+Issue/Feature:
+The second round of player cleanup asked for a simpler, less distracting watch experience. The provider names Viduki and Vidnest had to stop appearing anywhere in the visible app, including errors and the address bar. The PLAY NOW picker had to be short and uncluttered. Loading had to show real progress instead of a static spinner. The video picture had to stay bright, controls had to be easier to reach on phones, laptops and TVs, Picture-in-Picture had to be removed, and swiping from the top edge of a phone had to reveal the status bar without changing brightness or volume.
+
+What changed:
+The visible choices are now Server List 1 and Server List 2. Individual server names such as Leon, Jill, Ada and Claire are unchanged. The watch address uses ?source=2 for Server List 2 and no source value for the default list, so the provider names no longer show in the address bar. Internal API names are unchanged.
+
+The PLAY NOW dialog now has only a title, two numbered rows, a Recommended/Alternative hint and a close button. It enters focus as soon as it opens, keeps keyboard focus inside, supports arrow keys, Home/End, Tab, Escape and the backdrop, and restores the previous focus on close.
+
+The loading screen now shows rotating status text, a live elapsed-seconds counter, a thin animated progress line and a slow-load message after 45 seconds. The player and settings panels use the neutral list names. All user-facing extraction errors were rewritten without provider names or raw URLs.
+
+The top and bottom control scrims were made lighter and shorter, with a slightly clearer top bar and bottom panel. Small phone controls are a little larger. The top 48 pixels of the player are reserved for the device's status bar: swipes that start there no longer change brightness or volume, while normal swipes still do.
+
+Double-clicking the video on a laptop now enters or leaves fullscreen. TV devices request fullscreen automatically as soon as playback starts, with a retry on the first remote/keyboard input if the browser blocks the first attempt. Picture-in-Picture was removed from the controls, keyboard help and player logic, and native browser PiP is disabled on the video.
+
+Files affected:
+src/Components/SourceSelectModal.jsx
+src/Components/SourceSelectModal.css
+src/Pages/Movies.jsx
+src/Pages/VideoPlayer.jsx
+src/Components/Player/WatchPlayer.jsx
+src/Components/Player/PlayerSettings.jsx
+src/Components/Player/playerUtils.js
+src/Components/Player/player.css
+server/index.js
+server/vidnest-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The production build passes. ESLint reports no errors; the only two warnings are old hook-dependency warnings in Movies.jsx. The minimal picker was checked at desktop and phone sizes, and its focus starts on Server List 1, moves with the arrow keys, stays inside on Tab and closes with Escape. The loading screen showed 6s and 12s with different status text while a cold stream was fetched. The details page, picker, player, settings sheet and switching flow showed no visible Viduki or Vidnest names. Server List 2 appeared as the selected row and the player chip, while the default server chip showed Leon. Switching from the Leon server to Server List 2 and back worked, and the address changed to ?source=2 and then back to no source value. A top-edge touch swipe produced no brightness overlay or video filter; the same swipe in the middle of the screen changed brightness. A real double-click gesture entered fullscreen on the desktop profile. A TV-profile load requested fullscreen once and was fullscreen before any extra input. No picture-in-picture button or shortcut remains. Physical phones, TV hardware and Safari were not tested.
+
+---
+
+Date: 2026-10-29
+Area: Player loading screen and control glass effect
+
+Issue/Feature:
+The loading screen showed two animations at once: a large circular spinner with a pulsing halo and a thin moving line. The user chose to keep the thin line and remove the large spinner. The loading explanations were also too small. The bottom control panel's frosty glass effect could take about a second to appear when the controls came back, so it needed to feel immediate and smooth.
+
+What changed:
+The large loading spinner was removed from the first loading screen. The thin moving line, changing status, timer and slow-load note remain, and the small spinner used only for Buffering during playback was kept. The loading message is now larger and brighter, the status and timer are larger, and the slow-load note is larger and easier to read. The loading title now starts at the top of the block instead of leaving room for the removed spinner.
+
+The bottom control panel's glass effect was separated from the fade and slide animations. The frosted panel now appears at full strength immediately when controls are shown, while the controls inside it still fade and slide in. The blur was reduced from 14px with extra color saturation to a single 12px blur, and the browser is told to keep that layer ready. The panel also uses a darker background when blur is disabled for low-power devices or unsupported browsers. This removes the delay before the video behind the controls looks blurred.
+
+Files affected:
+src/Components/Player/WatchPlayer.jsx
+src/Components/Player/player.css
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The production build passes. Headless Chrome showed zero large spinners and one progress line on the loading screen; measured text sizes were 16.8px for the main message, 14.4px for the status and timer, and 13.44px for the note. The bottom panel was fully visible with opacity 1 as soon as the controls were shown, its blur was active at 12px, and only the controls inside it faded in over about 220ms. A phone-sized check at 390x844 showed the bottom panel and its contents fitting inside the viewport with no horizontal scrolling or console errors. A targeted ESLint check of the changed player files reported no errors. A full-project lint still reports older errors in unrelated pages and components. Physical phones, TV hardware and Safari were not tested.
+
+---
+
+Date: 2026-10-29
+Area: Video player error recovery
+
+Issue/Feature:
+When a server list failed, the error box only offered to retry the same list or return. The user wanted a direct choice in that error box to try the other server list, so a failed list would not force the viewer to open the server picker or go back. The new action had to stay simple and clear, use neutral Server List names, work on phones, laptops and TVs, and avoid starting the other list unless the viewer asked for it.
+
+What changed:
+The player now remembers which server lists have failed for the current movie. When a list cannot start playback, the main button in the error box reads "Try Server List 1" or "Try Server List 2" and switches straight to the other list. It stops the current attempt, updates the address to the matching list, hides the error, and shows "Trying Server List 1..." or "Trying Server List 2..." while the new list loads. Nothing is loaded in the background, so choosing a server still never starts an unexpected extra extraction. The older automatic recovery between individual servers also stays inside the current list and never moves to the other list without a click.
+
+If both lists fail, the main button becomes "Try again" and the other list is offered with "again" in its name. A short note says that both server lists were tried. "Choose server" still opens the server picker so a specific server can be picked, and "Go back" remains available. A playback failure keeps "Try again" as the main action, with the other list as a secondary action when it has not failed.
+
+The error box takes focus on its main action and keeps Tab inside. On TV screens, the arrow keys now follow the visible action order and cannot skip over the smaller buttons. Escape or remote Back leaves the player. Opening the error box closes the settings and help panels, but "Choose server" can still open settings from the error.
+
+The action layout gives the main button its own full-width row, keeps the two middle actions side by side on larger screens, and makes them stack on phones. A quiet full-width "Go back" stays at the bottom. The retry loading text was also corrected to name the list that is being tried.
+
+Files affected:
+src/Pages/VideoPlayer.jsx
+src/Components/Player/WatchPlayer.jsx
+src/Components/Player/player.css
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+A targeted ESLint check of the two player component files reports no errors, and the production build passes. Headless Chrome was used with the extraction request deliberately failing. With Server List 2 failed, the error box showed "Try Server List 1" as the focused main button, "Try again", "Choose server" and "Go back", with no provider names. Clicking the main button changed the address to the default list, showed "Trying Server List 1..." and then failed again as expected. The second error made "Try again" the main button, showed "Try Server List 2 again", and displayed the both-lists note. Tab stayed inside, and pressing "Try again" showed "Trying Server List 1..." rather than the generic loading text.
+
+A successful switch in both directions was also checked: Server List 2 failed and Server List 1 then played the real stream, and Server List 1 failed and Server List 2 then played with the chip "Server List 2". Both showed no provider names in the page. A TV-sized check at 1920x1080 started focus on the main list button, and ArrowDown moved to "Try again" instead of skipping to "Go back"; Escape left the player. A phone check at 390x844 showed the error box fitting inside the screen with no horizontal overflow, the main and back buttons at 317px wide and the two middle buttons at 154px each. The only console messages in the failure tests were the deliberate test 502 responses. A playback failure was not forced on a real stream, but its retry button uses the same tested retry path. A full-project lint still reports older errors in unrelated pages and components. Physical phones, TV hardware and Safari were not tested.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import {
+  audioTrackMatchesLanguage,
   captionsKey,
   clamp,
   detectSourceType,
@@ -70,7 +71,14 @@ const mediaErrorFor = (video) => {
   };
 };
 
-export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalError, mediaId }) {
+export function usePlaybackEngine({
+  source,
+  initialTime = 0,
+  profile,
+  onFatalError,
+  mediaId,
+  originalLanguage = "",
+}) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const dashRef = useRef(null);
@@ -78,6 +86,8 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
   const onFatalRef = useRef(onFatalError);
   const sourceRef = useRef(source);
   const mediaIdRef = useRef(mediaId);
+  const originalLanguageRef = useRef(originalLanguage);
+  const audioUserSelectedRef = useRef(false);
   const pendingStartRef = useRef(Number(initialTime) || 0);
   const initialTimeRef = useRef(Number(initialTime) || 0);
   const timeRef = useRef(0);
@@ -95,6 +105,7 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
   onFatalRef.current = onFatalError;
   sourceRef.current = source;
   mediaIdRef.current = mediaId;
+  originalLanguageRef.current = originalLanguage;
   snapshotRef.current = snapshot;
 
   if (!prefsRef.current) {
@@ -261,7 +272,7 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
     }
   }, []);
 
-  const setAudioTrack = useCallback((index) => {
+  const applyAudioTrack = useCallback((index) => {
     const trackIndex = Number(index);
     const hls = hlsRef.current;
     if (hls) {
@@ -292,6 +303,14 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
       setSnapshot((previous) => ({ ...previous, audioTrack: trackIndex }));
     }
   }, []);
+
+  const setAudioTrack = useCallback(
+    (index) => {
+      audioUserSelectedRef.current = true;
+      applyAudioTrack(index);
+    },
+    [applyAudioTrack]
+  );
 
   const setTextTrack = useCallback((index) => {
     const trackIndex = Number(index);
@@ -546,7 +565,9 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
 
   const sourceUrl = source?.streamUrl || "";
   const sourceType = source?.type || "";
-  const sourceKey = `${sourceUrl}|${sourceType}`;
+  const sourceForceProxy = !!source?.forceProxy;
+  const sourceReferer = source?.referer || "";
+  const sourceKey = `${sourceUrl}|${sourceType}|${sourceForceProxy ? "proxy" : "direct"}|${sourceReferer}`;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -594,6 +615,7 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
       void error;
     }
     fatalRef.current = false;
+    audioUserSelectedRef.current = false;
 
     setSnapshot((previous) => ({
       ...makeSnapshot(),
@@ -659,6 +681,20 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
           textTrack = 0;
           video.textTracks[0].mode = "showing";
         }
+        if (
+          !audioUserSelectedRef.current &&
+          originalLanguageRef.current &&
+          video.audioTracks
+        ) {
+          const match = audioTracks.findIndex((track) =>
+            audioTrackMatchesLanguage(track, originalLanguageRef.current)
+          );
+          if (match >= 0) {
+            Array.from(video.audioTracks).forEach((track, index) => {
+              track.enabled = index === match;
+            });
+          }
+        }
         const activeAudio = audioTracks.findIndex(
           (_, index) => video.audioTracks?.[index]?.enabled
         );
@@ -704,6 +740,20 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
             language: track.lang,
             kind: "audio",
           }));
+          let audioTrack = hls.audioTrack ?? -1;
+          if (!audioUserSelectedRef.current && originalLanguageRef.current) {
+            const match = audioTracks.findIndex((track) =>
+              audioTrackMatchesLanguage(track, originalLanguageRef.current)
+            );
+            if (match >= 0 && match !== hls.audioTrack) {
+              try {
+                hls.audioTrack = match;
+                audioTrack = match;
+              } catch (error) {
+                void error;
+              }
+            }
+          }
           const textTracks = (hls.subtitleTracks || []).map((track, index) => ({
             id: index,
             label:
@@ -726,7 +776,7 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
           }
           patch({
             audioTracks,
-            audioTrack: hls.audioTrack ?? -1,
+            audioTrack,
             textTracks,
             textTrack,
           });
@@ -894,6 +944,19 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
                 (track) => track.index === currentAudio.index
               );
             }
+            if (!audioUserSelectedRef.current && originalLanguageRef.current) {
+              const match = audioTracks.findIndex((track) =>
+                audioTrackMatchesLanguage(track, originalLanguageRef.current)
+              );
+              if (match >= 0) {
+                const tracks = player.getTracksFor("audio") || [];
+                const target = tracks[match];
+                if (target && currentAudio?.index !== target.index) {
+                  player.setCurrentTrack(target);
+                }
+                audioTrack = match;
+              }
+            }
             textTrack = player.getCurrentTextTrackIndex?.() ?? -1;
           } catch (error) {
             void error;
@@ -990,7 +1053,10 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
       if (!type) {
         type = Hls.isSupported() ? "hls" : "mp4";
       }
-      const mediaUrl = streamUrlFor(type, sourceUrl);
+      const mediaUrl = streamUrlFor(type, sourceUrl, {
+        forceProxy: sourceForceProxy,
+        referer: sourceReferer,
+      });
       patch({ engine: type });
 
       if (type === "hls") cleanupInner = attachHls(mediaUrl);
@@ -1025,7 +1091,16 @@ export function usePlaybackEngine({ source, initialTime = 0, profile, onFatalErr
       if (typeof cleanupInner === "function") cleanupInner();
       destroyEngines();
     };
-  }, [sourceKey, reloadToken, failPlayback, patch, sourceType, sourceUrl]);
+  }, [
+    sourceKey,
+    reloadToken,
+    failPlayback,
+    patch,
+    sourceType,
+    sourceUrl,
+    sourceForceProxy,
+    sourceReferer,
+  ]);
 
   return {
     videoRef,

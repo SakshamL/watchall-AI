@@ -1,12 +1,13 @@
 import React from "react";
-import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { movieAPI } from "../Services/api";
 import { movie_trailer_1, movie_trailer_2 } from "../Services/api";
 import SearchBar from "../Components/SearchBar";
 import { Link } from "react-router-dom";
 import CastCard from "../Components/CastCard";
 import AllMoviesPage from "./AllMoviesPage";
+import SourceSelectModal from "../Components/SourceSelectModal";
 import { Play } from "lucide-react";
 import { Film } from "lucide-react";
 import { Plus } from "lucide-react";
@@ -19,10 +20,25 @@ const IMGPATH = "https://image.tmdb.org/t/p/w780"; // detail page shows large im
 function Movies(props) {
   const { id } = useParams();
   const { title } = useParams();
+  const navigate = useNavigate();
   const [movieDetails, setMovieDetails] = useState([]);
   const [cast, setCast] = useState([]);
   const [movieCert, setMovieCert] = useState("");
   const [trailer, setTrailer] = useState([]);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const playButtonRef = useRef(null);
+  const sourceWasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (sourceOpen) {
+      sourceWasOpenRef.current = true;
+      return;
+    }
+    if (sourceWasOpenRef.current) {
+      sourceWasOpenRef.current = false;
+      playButtonRef.current?.focus();
+    }
+  }, [sourceOpen]);
 
   useEffect(() => {
     getMovie_details();
@@ -126,15 +142,19 @@ function Movies(props) {
                       </h3>
 
                       <div className="grid md:grid-cols-2 lg:grid-cols-[1fr_auto_1fr] lg:w-[42%] max-sm:gap-3 sm:gap-4 mb-5 ml-3 md:ml-0 mt-4 md:mt-5 lg:mt-7">
-                        <Link
-                          to={`/movie/${movieDetails.id}/watch`}
-                          className="md:flex-1"
+                        <button
+                          ref={playButtonRef}
+                          type="button"
+                          onClick={() => setSourceOpen(true)}
+                          className="md:flex-1 text-left rounded-[10px] focus:outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                          aria-haspopup="dialog"
+                          aria-expanded={sourceOpen}
                         >
-                          <div className="flex items-center gap-3 bg-gradient-to-r from-indigo-800 to-cyan-500 rounded-[10px] cursor-pointer px-4 py-2 text-[#f5f5f5] md:py-3 shadow-[0px_0px_5px_0px_rgba(40,_90,_216,_1)] uppercase font-bold hover:scale-[1.1] duration-100">
+                          <span className="flex items-center gap-3 bg-gradient-to-r from-indigo-800 to-cyan-500 rounded-[10px] cursor-pointer px-4 py-2 text-[#f5f5f5] md:py-3 shadow-[0px_0px_5px_0px_rgba(40,_90,_216,_1)] uppercase font-bold hover:scale-[1.1] duration-100">
                             <Play />
                             PLAY NOW
-                          </div>
-                        </Link>
+                          </span>
+                        </button>
 
                         <Link
                           to={`https://www.youtube.com/watch?v=${trailer}`}
@@ -356,6 +376,15 @@ function Movies(props) {
             </div>
           </div>
         </div>
+        <SourceSelectModal
+          open={sourceOpen}
+          onClose={() => setSourceOpen(false)}
+          onSelect={(source) => {
+            setSourceOpen(false);
+            const watchPath = `/movie/${movieDetails.id || id}/watch`;
+            navigate(source === "vidnest" ? `${watchPath}?source=2` : watchPath);
+          }}
+        />
       </>
     );
   }

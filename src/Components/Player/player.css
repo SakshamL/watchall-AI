@@ -108,33 +108,49 @@
   touch-action: none;
 }
 
+/* Keep the very top edge free for the phone's status bar / notification shade. */
+.wa-edge-guard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: max(48px, calc(var(--wa-safe-top) + 16px));
+  touch-action: auto;
+  display: none;
+}
+
+.wa-player[data-touch="true"] .wa-edge-guard {
+  display: block;
+}
+
 .wa-scrim {
   position: absolute;
   left: 0;
   right: 0;
   z-index: 3;
   pointer-events: none;
-  transition: opacity 320ms ease;
+  transition: opacity 220ms ease;
 }
 
 .wa-scrim-top {
   top: 0;
-  height: min(38vh, 300px);
+  height: min(30vh, 220px);
   background: linear-gradient(
     180deg,
-    rgba(0, 0, 0, 0.9) 0%,
-    rgba(0, 0, 0, 0.58) 46%,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.26) 46%,
     transparent 100%
   );
 }
 
 .wa-scrim-bottom {
   bottom: 0;
-  height: min(46vh, 380px);
+  height: min(38vh, 300px);
   background: linear-gradient(
     0deg,
-    rgba(0, 0, 0, 0.96) 0%,
-    rgba(0, 0, 0, 0.7) 44%,
+    rgba(0, 0, 0, 0.76) 0%,
+    rgba(0, 0, 0, 0.36) 44%,
     transparent 100%
   );
 }
@@ -173,7 +189,7 @@
     var(--wa-safe-right)
     18px
     var(--wa-safe-left);
-  background: linear-gradient(180deg, rgba(2, 4, 9, 0.76), transparent);
+  background: linear-gradient(180deg, rgba(2, 4, 9, 0.42), transparent);
 }
 
 .wa-player[data-ui="hidden"] .wa-topbar {
@@ -355,25 +371,48 @@
     var(--wa-safe-right)
     var(--wa-safe-bottom)
     var(--wa-safe-left);
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.76), transparent);
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: none;
 }
 
 .wa-player[data-ui="hidden"] .wa-controls {
-  transform: translateY(16px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 200ms ease,
+    visibility 0s linear 200ms;
+}
+
+.wa-controls-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition:
+    opacity 220ms ease,
+    transform 300ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.wa-player[data-ui="hidden"] .wa-controls-inner {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
 .wa-bottom {
   display: flex;
   flex-direction: column;
-  gap: 7px;
   max-width: 1600px;
   margin: 0 auto;
   padding: 10px 18px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 22px;
-  background: rgba(8, 12, 21, 0.54);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(18px) saturate(125%);
+  background: rgba(8, 12, 21, 0.44);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  will-change: backdrop-filter;
 }
 
 .wa-control-row {
@@ -683,7 +722,7 @@
 }
 
 .wa-loading-content h2 {
-  margin: 24px 0 8px;
+  margin: 0 0 10px;
   font-size: clamp(1.5rem, 3vw, 2.4rem);
   letter-spacing: -0.025em;
   line-height: 1.1;
@@ -692,11 +731,70 @@
 .wa-loading-content p {
   margin: 0 0 22px;
   color: var(--wa-muted);
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   line-height: 1.55;
 }
 
+.wa-loading-content .wa-loading-message {
+  margin-bottom: 16px !important;
+  color: rgba(233, 241, 250, 0.84);
+}
+
+.wa-loading-meter {
+  position: relative;
+  width: min(300px, 72vw);
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.wa-loading-meter span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--wa-accent),
+    var(--wa-accent-2),
+    transparent
+  );
+  animation: wa-loading-scan 1.6s ease-in-out infinite;
+}
+
+.wa-loading-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  margin-top: 10px;
+  color: rgba(235, 242, 250, 0.82);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.wa-loading-separator {
+  color: rgba(255, 255, 255, 0.36);
+}
+
+.wa-loading-timer {
+  min-width: 28px;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: left;
+}
+
+.wa-loading-note {
+  margin: 0 0 18px !important;
+  color: rgba(210, 226, 241, 0.66) !important;
+  font-size: 0.84rem !important;
+  line-height: 1.5 !important;
+}
+
 .wa-loader-ring {
+  position: relative;
   width: 56px;
   height: 56px;
   border: 3px solid rgba(255, 255, 255, 0.14);
@@ -705,6 +803,15 @@
   border-radius: 50%;
   animation: wa-spin 850ms linear infinite;
   box-shadow: 0 0 30px rgba(46, 196, 182, 0.18);
+}
+
+.wa-loader-ring::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  border: 1px solid rgba(46, 196, 182, 0.28);
+  border-radius: 50%;
+  animation: wa-loader-pulse 1.8s ease-out infinite;
 }
 
 .wa-loader-small {
@@ -780,6 +887,22 @@
   margin-top: 24px;
 }
 
+.wa-error-card .wa-error-actions .wa-primary-btn {
+  flex: 1 0 100%;
+}
+
+.wa-error-card .wa-error-actions .wa-secondary-btn {
+  flex: 1 1 140px;
+}
+
+.wa-error-card .wa-error-actions .wa-error-back {
+  flex-basis: 100%;
+  min-height: 40px;
+  border-color: transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+}
+
 .wa-primary-btn,
 .wa-secondary-btn {
   display: inline-flex;
@@ -800,7 +923,7 @@
   box-shadow: 0 10px 28px rgba(66, 95, 255, 0.26);
 }
 
-.wa-primary-btn:hover {
+.wa-primary-btn:not(:disabled):hover {
   filter: brightness(1.08);
 }
 
@@ -810,8 +933,20 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
-.wa-secondary-btn:hover {
+.wa-secondary-btn:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.13);
+}
+
+.wa-primary-btn:disabled,
+.wa-secondary-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.wa-error-actions .wa-error-back:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.86);
 }
 
 .wa-error-note {
@@ -822,6 +957,8 @@
   margin-top: 16px !important;
   color: var(--wa-muted);
   font-size: 0.78rem !important;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .wa-buffering {
@@ -1118,6 +1255,20 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.wa-source-group {
+  margin: 10px 0 4px;
+  padding: 0 12px;
+  color: rgba(120, 214, 255, 0.72);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.wa-source-group:first-child {
+  margin-top: 0;
 }
 
 .wa-option-row {
@@ -1510,7 +1661,7 @@
   }
 
   .wa-control-group-right .wa-icon-btn {
-    width: 38px;
+    width: 40px;
   }
 
   .wa-bottom {
@@ -1729,6 +1880,17 @@
   backdrop-filter: none;
 }
 
+.wa-player[data-low-power="true"] .wa-bottom {
+  background: rgba(8, 12, 21, 0.78);
+  will-change: auto;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .wa-bottom {
+    background: rgba(8, 12, 21, 0.78);
+  }
+}
+
 .wa-player[data-low-power="true"] .wa-scrim-top,
 .wa-player[data-low-power="true"] .wa-scrim-bottom {
   opacity: 0.82;
@@ -1751,6 +1913,27 @@
 @keyframes wa-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes wa-loading-scan {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+@keyframes wa-loader-pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.82);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
   }
 }
 

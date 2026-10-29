@@ -17,6 +17,7 @@ const axios = require("axios");
 const http = require("http");
 const https = require("https");
 const { URL } = require("url");
+const { extractVidnest, buildEmbedPage } = require("./vidnest-extractor.cjs");
 
 // puppeteer-extra is used with the stealth plugin for local Chrome launches.
 // Browserless provides its own stealth layer when running on Vercel.
@@ -54,6 +55,11 @@ function localLaunchOptions() {
       "--disable-setuid-sandbox",
       "--disable-gpu",
       "--disable-blink-features=AutomationControlled",
+      "--autoplay-policy=no-user-gesture-required",
+      "--mute-audio",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
     ],
   };
 }
@@ -115,6 +121,41 @@ function setCachedExtract(key, data) {
     extractCache.delete(extractCache.keys().next().value);
   }
   extractCache.set(key, { data, t: Date.now() });
+}
+
+// Vidnest extraction is slow (roughly 15-25 seconds), so concurrent requests
+// for the same title share a single browser run instead of launching several.
+const vidnestInflight = new Map();
+
+async function extractVidnestShared(key, task) {
+  const existing = vidnestInflight.get(key);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      return await task();
+    } finally {
+      vidnestInflight.delete(key);
+    }
+  })();
+  vidnestInflight.set(key, promise);
+  return promise;
+}
+
+const VIDNEST_WAIT_MS = Math.min(
+  45000,
+  Math.max(8000, Number(process.env.VIDNEST_WAIT_MS) || 20000)
+);
+
+function requestOrigin(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "")
+    .split(",")[0]
+    .trim();
+  const proto = forwardedProto || req.protocol || "http";
+  const host = forwardedHost || req.get("host") || `localhost:${PORT}`;
+  return `${proto}://${host}`;
 }
 
 app.use(cors());
@@ -179,22 +220,34 @@ function cacheSet(url, buffer, contentType) {
   segmentCacheBytes += buffer.length;
 }
 
-async function prefetch(url) {
-  if (cacheGet(url)) return;
+function cacheKeyFor(url, referer) {
+  return referer ? `${url}|${referer}` : url;
+}
+
+async function prefetch(url, referer) {
+  const key = cacheKeyFor(url, referer);
+  if (cacheGet(key)) return;
   try {
+    const refererHeaders = referer
+      ? { Referer: referer, Origin: new URL(referer).origin }
+      : {};
     const res = await axios({
       method: "GET",
       url,
       responseType: "arraybuffer",
       timeout: 15000,
-      headers: { ...CDN_HEADERS, "Accept-Encoding": "identity" },
+      headers: {
+        ...CDN_HEADERS,
+        ...refererHeaders,
+        "Accept-Encoding": "identity",
+      },
       httpAgent,
       httpsAgent,
       maxContentLength: MAX_CACHE_ENTRY_BYTES,
       validateStatus: (status) => status >= 200 && status < 300,
     });
     cacheSet(
-      url,
+      key,
       Buffer.from(res.data),
       res.headers["content-type"] || "video/mp2t"
     );
@@ -254,8 +307,9 @@ function classifyTarget(url, hint) {
   return "";
 }
 
-function proxyQueryUrl(target) {
-  return `/api/proxy?url=${encodeURIComponent(target)}`;
+function proxyQueryUrl(target, referer) {
+  const ref = referer ? `&referer=${encodeURIComponent(referer)}` : "";
+  return `/api/proxy?url=${encodeURIComponent(target)}${ref}`;
 }
 
 function proxyPathUrl(target) {
@@ -427,6 +481,10 @@ async function probeStream(url, kind) {
 app.get("/api/extract", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const { tmdb, type = "movie", season, episode } = req.query;
+  const source =
+    String(req.query.source || "").trim().toLowerCase() === "vidnest"
+      ? "vidnest"
+      : "viduki";
   const forcedSrv =
     typeof req.query.srv === "string" ? req.query.srv.trim().replace(/[^A-Za-z]/g, "") : "";
   // TMDB original_language of the title (e.g. "hi"). Hindi titles get Viduki's
@@ -437,6 +495,44 @@ app.get("/api/extract", async (req, res) => {
 
   if (!tmdb) {
     return res.status(400).json({ error: "Missing tmdb query param" });
+  }
+
+  if (source === "vidnest") {
+    if (!/^\d{1,10}$/.test(String(tmdb))) {
+      return res.status(400).json({ error: "A numeric TMDB id is required." });
+    }
+    const cacheKey = `vidnest:${type}:${tmdb}`;
+    const cached = getCachedExtract(cacheKey);
+    if (cached) {
+      console.log(`[vidnest] Cache hit: ${cacheKey}`);
+      return res.json(cached);
+    }
+
+    const pageUrl = `https://vidnest.fun/movie/${tmdb}`;
+    const embedUrl = `${requestOrigin(req)}/api/embed?src=${encodeURIComponent(pageUrl)}`;
+    console.log(`[vidnest] Extracting: ${pageUrl} (embed wrapper: ${embedUrl})`);
+
+    try {
+      const data = await extractVidnestShared(cacheKey, () =>
+        extractVidnest({
+          tmdb,
+          getBrowser,
+          embedUrl,
+          waitMs: VIDNEST_WAIT_MS,
+        })
+      );
+      setCachedExtract(cacheKey, data);
+      console.log(`[vidnest] Result: type=${data.type} server=${data.server}`);
+      return res.json(data);
+    } catch (error) {
+      console.error(`[vidnest] Error: ${error.message}`);
+      const raw = String(error?.message || "");
+      const safe = /vidnest|viduki|https?:\/\//i.test(raw)
+        ? "This server list could not find a playable stream for this title. Try Server List 1."
+        : raw ||
+          "This server list could not find a playable stream for this title. Try Server List 1.";
+      return res.status(502).json({ error: safe });
+    }
   }
 
   const vidukiUrl =
@@ -826,7 +922,7 @@ app.get("/api/extract", async (req, res) => {
       console.error(`  page HTML still contains player? ${diagnostics.playerPresent}`);
 
       return res.status(502).json({
-        error: "No playable stream found — Viduki's servers are not responding right now. Please try again in a moment.",
+        error: "No playable stream found — the servers are not responding right now. Please try again in a moment.",
         diagnostics,
       });
     }
@@ -843,14 +939,16 @@ app.get("/api/extract", async (req, res) => {
       return best ? best.name : null;
     })();
 
-    const result = { streamUrl: picked.url, type: streamType, server: activeServer };
+    const result = { streamUrl: picked.url, type: streamType, server: activeServer, source: "viduki" };
     setCachedExtract(cacheKey, result);
     console.log(`[extract] Result: srv=${activeServer} type=${streamType}`);
     res.json(result);
 
   } catch (err) {
     console.error("[extract] Error:", err.message);
-    res.status(500).json({ error: err.message || "Extraction failed" });
+    res.status(500).json({
+      error: "The stream could not be started right now. Please try again.",
+    });
   } finally {
     if (browser) {
       try {
@@ -949,6 +1047,23 @@ app.get("/api/servers", (req, res) => {
   return res.json({ servers: FALLBACK_SERVERS });
 });
 
+// ─── 1c. EMBED WRAPPER — Vidnest only boots its player inside a frame ─────────
+
+app.get("/api/embed", (req, res) => {
+  const target = parseTargetUrl(String(req.query.src || ""));
+  if (!target) {
+    return res.status(400).type("text/plain").send("Invalid embed URL");
+  }
+  const host = target.hostname.toLowerCase();
+  if (host !== "vidnest.fun" && !host.endsWith(".vidnest.fun")) {
+    return res.status(400).type("text/plain").send("Unsupported embed host");
+  }
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "origin-when-cross-origin");
+  return res.send(buildEmbedPage(target.toString()));
+});
+
 
 app.get("/api/media-info", async (req, res) => {
   const target = parseTargetUrl(req.query.url);
@@ -1018,6 +1133,13 @@ async function handleProxy(req, res) {
   const targetUrl = target.toString();
   const hint = typeof req.query.type === "string" ? req.query.type : "";
   const kind = classifyTarget(target, hint);
+  const refererRaw =
+    typeof req.query.referer === "string" ? req.query.referer.trim() : "";
+  const refererTarget = refererRaw ? parseTargetUrl(refererRaw) : null;
+  const referer = refererTarget ? refererTarget.toString() : "";
+  const refererHeaders = referer
+    ? { Referer: referer, Origin: refererTarget.origin }
+    : {};
 
   if (kind) {
     const response = await axios({
@@ -1027,6 +1149,7 @@ async function handleProxy(req, res) {
       timeout: 20000,
       headers: {
         ...CDN_HEADERS,
+        ...refererHeaders,
         "Accept-Encoding": "identity",
       },
       httpAgent,
@@ -1039,12 +1162,13 @@ async function handleProxy(req, res) {
     if (kind === "hls") {
       const { rewritten, segmentUrls } = rewritePlaylist(
         String(response.data || ""),
-        target
+        target,
+        referer
       );
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       res.setHeader("Cache-Control", "no-store");
       res.send(rewritten);
-      segmentUrls.slice(0, 6).forEach((url) => prefetch(url));
+      segmentUrls.slice(0, 6).forEach((url) => prefetch(url, referer));
       return;
     }
 
@@ -1054,13 +1178,15 @@ async function handleProxy(req, res) {
     return res.send(rewritten);
   }
 
-  const cached = cacheGet(targetUrl);
+  const cacheKey = cacheKeyFor(targetUrl, referer);
+  const cached = cacheGet(cacheKey);
   if (cached) {
     return sendMedia(req, res, cached.buffer, cached.contentType);
   }
 
   const upstreamHeaders = {
     ...CDN_HEADERS,
+    ...refererHeaders,
     "Accept-Encoding": "identity",
   };
   if (req.headers.range) upstreamHeaders.Range = req.headers.range;
@@ -1103,7 +1229,7 @@ async function handleProxy(req, res) {
   }
 
   if (!req.headers.range) {
-    cacheSet(targetUrl, buffer, contentType);
+    cacheSet(cacheKey, buffer, contentType);
   }
 
   return sendMedia(req, res, buffer, contentType, {
@@ -1126,14 +1252,14 @@ function isHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || ""));
 }
 
-function rewritePlaylist(text, baseUrl) {
+function rewritePlaylist(text, baseUrl, referer) {
   const segmentUrls = [];
 
   const rewriteUri = (uri) => {
     const absolute = resolveMediaUrl(uri, baseUrl);
     if (!isHttpUrl(absolute)) return uri;
     if (!absolute.includes(".m3u8")) segmentUrls.push(absolute);
-    return proxyQueryUrl(absolute);
+    return proxyQueryUrl(absolute, referer);
   };
 
   const rewritten = String(text)

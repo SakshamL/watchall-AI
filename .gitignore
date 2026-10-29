@@ -17,6 +17,9 @@ dist-ssr
 .env.*.local
 .vercel
 
+# Standalone tool (not part of the project)
+/standalone-stream-extractor.cjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

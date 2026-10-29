@@ -1,5 +1,6 @@
+import { Fragment } from "react";
 import { Check, Loader2, Server, X } from "lucide-react";
-import { formatTime, qualityLabel } from "./playerUtils";
+import { formatTime, qualityLabel, serverDisplayName } from "./playerUtils";
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const CAPTION_SIZES = [
@@ -136,9 +137,15 @@ export default function PlayerSettings({
             </div>
           </Section>
 
-          {snapshot.audioTracks.length > 0 ? (
-            <Section title="Audio">
-              {snapshot.audioTracks.map((track, index) => (
+          <Section title="Audio">
+            {snapshot.audioTracks.length === 0 ? (
+              <p className="wa-empty-row">
+                {snapshot.status === "idle" || snapshot.status === "loading"
+                  ? "Audio tracks will appear when the stream loads."
+                  : "This stream has no alternate audio tracks."}
+              </p>
+            ) : (
+              snapshot.audioTracks.map((track, index) => (
                 <button
                   key={`${track.label}-${index}`}
                   type="button"
@@ -158,9 +165,9 @@ export default function PlayerSettings({
                     {snapshot.audioTrack === index ? <Check size={18} /> : null}
                   </span>
                 </button>
-              ))}
-            </Section>
-          ) : null}
+              ))
+            )}
+          </Section>
 
           <Section title="Subtitles">
             <button
@@ -228,36 +235,42 @@ export default function PlayerSettings({
             {serversReady && servers.length === 0 ? (
               <p className="wa-empty-row">No alternative servers are available.</p>
             ) : null}
-            {servers.map((server) => {
+            {servers.map((server, index) => {
               const isActive = server.name === activeServer;
               const isSwitching = switchingServer === server.name;
+              const showGroup =
+                index === 0 || servers[index - 1].group !== server.group;
               return (
-                <button
-                  key={server.name}
-                  type="button"
-                  className={`wa-option-row wa-server-row ${isActive ? "is-active" : ""}`}
-                  data-focusable="true"
-                  data-action="server"
-                  data-value={server.name}
-                  disabled={!!switchingServer}
-                  aria-pressed={isActive}
-                >
+                <Fragment key={`${server.group || "source"}-${server.name}`}>
+                  {showGroup && server.group ? (
+                    <p className="wa-source-group">{server.group}</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`wa-option-row wa-server-row ${isActive ? "is-active" : ""}`}
+                    data-focusable="true"
+                    data-action="server"
+                    data-value={server.name}
+                    disabled={!!switchingServer}
+                    aria-pressed={isActive}
+                  >
                   <span className="wa-server-name">
                     <Server size={16} />
-                    {server.name}
+                    {server.label || server.name}
                     {server.language ? (
                       <span className="wa-option-sub">{server.language}</span>
                     ) : null}
                   </span>
-                  <span className="wa-option-meta">
-                    {server.mp4 ? <span className="wa-tag">MP4</span> : null}
-                    {isSwitching ? (
-                      <Loader2 size={16} className="wa-spin" />
-                    ) : isActive ? (
-                      <span className="wa-active-dot" aria-label="Active" />
-                    ) : null}
-                  </span>
-                </button>
+                    <span className="wa-option-meta">
+                      {server.mp4 ? <span className="wa-tag">MP4</span> : null}
+                      {isSwitching ? (
+                        <Loader2 size={16} className="wa-spin" />
+                      ) : isActive ? (
+                        <span className="wa-active-dot" aria-label="Active" />
+                      ) : null}
+                    </span>
+                  </button>
+                </Fragment>
               );
             })}
           </Section>
@@ -278,7 +291,7 @@ export default function PlayerSettings({
               </div>
               <div>
                 <dt>Server</dt>
-                <dd>{activeServer || "—"}</dd>
+                <dd>{serverDisplayName(activeServer) || "—"}</dd>
               </div>
               <div>
                 <dt>Live</dt>

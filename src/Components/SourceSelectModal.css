@@ -1,0 +1,234 @@
+.wa-source-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.wa-source-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: rgba(2, 6, 12, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.wa-source-dialog {
+  position: relative;
+  width: min(400px, 100%);
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: #0b111a;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  color: #f4f9ff;
+  animation: wa-source-in 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.wa-source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.wa-source-header h2 {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.wa-source-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(240, 247, 255, 0.8);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.wa-source-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.wa-source-close:focus,
+.wa-source-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(48, 138, 255, 0.38);
+}
+
+.wa-source-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wa-source-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.wa-source-card:hover {
+  border-color: rgba(126, 204, 255, 0.42);
+  background: rgba(97, 171, 255, 0.08);
+}
+
+.wa-source-card:focus,
+.wa-source-card:focus-visible {
+  outline: none;
+  border-color: rgba(112, 218, 255, 0.8);
+  box-shadow: 0 0 0 3px rgba(48, 138, 255, 0.3);
+  background: rgba(97, 171, 255, 0.1);
+}
+
+.wa-source-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(114, 241, 230, 0.1);
+  color: #9de8f6;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.wa-source-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.wa-source-hint {
+  flex: 0 0 auto;
+  color: rgba(210, 226, 241, 0.46);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wa-source-arrow {
+  flex: 0 0 auto;
+  color: rgba(190, 225, 255, 0.5);
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.wa-source-card:hover .wa-source-arrow,
+.wa-source-card:focus .wa-source-arrow {
+  transform: translateX(2px);
+  color: #8fe6ff;
+}
+
+@keyframes wa-source-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 560px) {
+  .wa-source-layer {
+    align-items: flex-end;
+    padding: 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .wa-source-dialog {
+    width: 100%;
+    padding: 16px;
+    border-radius: 18px 18px 12px 12px;
+    animation-name: wa-source-up;
+  }
+
+  .wa-source-card {
+    min-height: 58px;
+  }
+
+  .wa-source-hint {
+    display: none;
+  }
+}
+
+@keyframes wa-source-up {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (min-width: 1600px) {
+  .wa-source-dialog {
+    width: min(520px, 100%);
+    padding: 24px;
+  }
+
+  .wa-source-header h2 {
+    font-size: 1.35rem;
+  }
+
+  .wa-source-card {
+    min-height: 78px;
+    padding: 14px 16px;
+  }
+
+  .wa-source-index {
+    width: 38px;
+    height: 38px;
+    font-size: 0.9rem;
+  }
+
+  .wa-source-label {
+    font-size: 1.08rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-source-dialog,
+  .wa-source-card,
+  .wa-source-close,
+  .wa-source-arrow {
+    animation: none !important;
+    transition: none !important;
+  }
+}

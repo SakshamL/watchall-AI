@@ -59,6 +59,12 @@ export const prefsKey = "watchall:player:prefs";
 export const captionsKey = "watchall:player:captions";
 export const captionSizeKey = "watchall:player:caption-size";
 
+export const alternateServerId = "Vidnest";
+
+export function serverDisplayName(name) {
+  return name === alternateServerId ? "Server List 2" : name;
+}
+
 export function getDeviceProfile() {
   const ua = navigator.userAgent || "";
   const params = new URLSearchParams(window.location.search);
@@ -88,7 +94,6 @@ export function getDeviceProfile() {
     lowPower,
     reducedMotion,
     isHiDPi: window.devicePixelRatio >= 2,
-    supportsPip: !isIOS && !!document.pictureInPictureEnabled,
   };
 }
 
@@ -104,14 +109,15 @@ export function detectSourceType(url, hint) {
   return "";
 }
 
-export function proxyUrl(url, type = "") {
+export function proxyUrl(url, type = "", referer = "") {
   const hint = type ? `&type=${encodeURIComponent(type)}` : "";
-  return `/api/proxy?url=${encodeURIComponent(url)}${hint}`;
+  const ref = referer ? `&referer=${encodeURIComponent(referer)}` : "";
+  return `/api/proxy?url=${encodeURIComponent(url)}${hint}${ref}`;
 }
 
-export function streamUrlFor(type, url) {
-  if (import.meta.env.DEV && type !== "mp4") {
-    return proxyUrl(url, type);
+export function streamUrlFor(type, url, { forceProxy = false, referer = "" } = {}) {
+  if (forceProxy || (import.meta.env.DEV && type !== "mp4")) {
+    return proxyUrl(url, type, referer);
   }
   return url;
 }
@@ -143,6 +149,58 @@ export function qualityLabel(track) {
 export function trackLabel(track, index, prefix) {
   if (!track) return `${prefix} ${index + 1}`;
   return track.label || track.name || track.language || track.lang || `${prefix} ${index + 1}`;
+}
+
+const AUDIO_LANGUAGE_ALIASES = {
+  hi: ["hi", "hin", "hindi"],
+  en: ["en", "eng", "english"],
+  ta: ["ta", "tam", "tamil"],
+  te: ["te", "tel", "telugu"],
+  ml: ["ml", "mal", "malayalam"],
+  kn: ["kn", "kan", "kannada"],
+  bn: ["bn", "ben", "bengali"],
+  mr: ["mr", "mar", "marathi"],
+  gu: ["gu", "guj", "gujarati"],
+  pa: ["pa", "pan", "punjabi"],
+  ur: ["ur", "urd", "urdu"],
+  or: ["or", "ori", "odia", "oriya"],
+  as: ["as", "asm", "assamese"],
+  ne: ["ne", "nep", "nepali"],
+  si: ["si", "sin", "sinhala", "sinhalese"],
+  fr: ["fr", "fre", "fra", "french"],
+  es: ["es", "spa", "spanish"],
+  de: ["de", "ger", "deu", "german"],
+  ja: ["ja", "jpn", "japanese"],
+  ko: ["ko", "kor", "korean"],
+  zh: ["zh", "chi", "zho", "chinese", "mandarin"],
+  ar: ["ar", "ara", "arabic"],
+  ru: ["ru", "rus", "russian"],
+  pt: ["pt", "por", "portuguese"],
+  tr: ["tr", "tur", "turkish"],
+  id: ["id", "ind", "indonesian"],
+  th: ["th", "tha", "thai"],
+  vi: ["vi", "vie", "vietnamese"],
+};
+
+export function audioTrackMatchesLanguage(track, language) {
+  const requested = String(language || "")
+    .trim()
+    .toLowerCase()
+    .split(/[-_]/)[0];
+  if (!requested) return false;
+  const aliases = AUDIO_LANGUAGE_ALIASES[requested] || [requested];
+  const values = [track?.language, track?.lang, track?.label, track?.name]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase());
+  return values.some((value) =>
+    aliases.some((alias) => {
+      if (value === alias) return true;
+      if (value.startsWith(`${alias}-`) || value.startsWith(`${alias}_`)) {
+        return true;
+      }
+      return alias.length > 2 && new RegExp(`\\b${alias}\\b`).test(value);
+    })
+  );
 }
 
 export function hlsConfigFor(profile) {
