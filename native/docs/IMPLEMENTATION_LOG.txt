@@ -1,0 +1,365 @@
+WATCHALL NATIVE — IMPLEMENTATION LOG
+====================================
+
+This file records the major implementation work for the native Android phone and Android TV apps.
+New entries are added at the bottom. Older entries are never removed.
+
+---
+
+Date: 2026-10-31
+Area: Native Android applications (phone and TV)
+
+Issue/Feature:
+WatchAll needed two native Android apps instead of relying only on the web player: a phone app and a
+remote-first Android TV app. Both had to use the same WatchAll backend and TMDB catalogue, support
+the two-list server model, show resume history and watchlist, provide full playback controls, and
+avoid exposing internal provider names. The TV app had to be fully usable with a D-pad, while the
+phone app had to feel like a premium mobile streaming app. The work was kept inside the native/
+tree so the existing React/Node app would not be disturbed.
+
+What changed:
+A new Gradle project was created with three modules: core, mobile and tv. The shared core contains
+TMDB clients, WatchAll backend clients, preference storage, resume and watchlist handling, catalogue
+view models, player view models and a Media3 playback controller. The backend address and TMDB key
+are compiled from native/local.properties. All stream URLs are played through the backend proxy.
+
+The phone app has four bottom tabs (Home, Search, Library, Settings), overlay screens for Details
+and Player, a dark cinema theme, lazy catalogue rows, a featured hero pager, season and episode
+selection, recommendations and a landscape Media3 player. The player supports play/pause, seeking,
+10-second skips, quality, audio tracks, subtitles, speed, source switching, automatic retry and
+resume saving.
+
+The TV app uses a fixed left navigation rail and the same five areas plus Browse. Every TV card,
+button, filter and list row is a real focus target. Rows use ordinary scrolling containers instead
+of lazy lists so off-screen focus targets are composed, and focused items are brought into view.
+The TV player handles remote media keys, D-pad reveal of controls, Back behavior, source and track
+dialogs, and focus recovery after errors and loading. The TV layout uses larger type and a cyan focus
+ring.
+
+The two visible source choices are always Server List 1 and Server List 2. Server List 1 is the
+recommended list for movies and TV. Server List 2 is a movie-only fallback that can take about 30
+seconds. The player may automatically try one next server inside Server List 1 after a playback
+failure, but it never moves to Server List 2 without the viewer asking. Error screens use Try again
+and Try Server List 1/2 actions, and show a both-lists note when both have failed.
+
+Final hardening fixed several issues found during review:
+- Cancelled searches, catalogue loads, season loads and extractions can no longer overwrite newer
+  state with an old error.
+- TV details initial focus no longer steals focus every time a season or episode is selected.
+- TV Library attaches its initial focus request to the saved grid when continue watching is empty.
+- TV error screens can focus their retry action.
+- The source panel's Clear all action now has a proper TV focus treatment.
+- The phone Home footer refresh text is now clickable.
+- Phone tab scroll and list state are preserved when switching tabs or returning from Details/Player.
+- The phone player Back button no longer exits while a bottom sheet is open.
+- The TV player key handler was restricted to media/navigation keys and ordered before focusability.
+- Media3 unstable API warnings are suppressed locally and both lint tasks pass.
+- Deprecated back icons were replaced with auto-mirrored icons.
+
+Files affected:
+native/settings.gradle.kts
+native/build.gradle.kts
+native/gradle.properties
+native/local.properties (local only, gitignored)
+native/core/ (19 Kotlin files, resources and build configuration)
+native/mobile/ (12 Kotlin files, manifest, theme, icons and build configuration)
+native/tv/ (17 Kotlin files, manifest, theme, banner, icons and build configuration)
+native/docs/README.md
+native/docs/BUILD_AND_INSTALL.md
+native/docs/ARCHITECTURE.md
+native/docs/QA_AUDIT.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+- :core:compileDebugKotlin, :mobile:compileDebugKotlin and :tv:compileDebugKotlin pass with no
+  warnings after the final cleanup.
+- :mobile:lintDebug and :tv:lintDebug pass with 0 errors. The only warnings are launcher icon shape
+  suggestions and Android backup configuration suggestions.
+- Both debug APKs build successfully:
+  native/mobile/build/outputs/apk/debug/mobile-debug.apk (24.6 MB)
+  native/tv/build/outputs/apk/debug/tv-debug.apk (24.1 MB)
+- The backend was reachable on port 3001 and /api/servers returned the server list.
+- Server List 1 extraction was checked with a movie and a TV episode (both HLS), and the backend
+  proxy returned playable playlists.
+- Server List 2 extraction was checked with a movie and returned an HLS playlist through the proxy.
+- Playlist rewriting was confirmed: segment lines point back through /api/proxy rather than directly
+  to the CDN.
+- Static review covered phone and TV navigation, back stacks, player lifecycle, resume saving,
+  source switching, error hierarchy, focus requests, cancellation behavior and configuration.
+- Runtime testing on a phone, TV or emulator was not completed. The available emulator did not boot
+  to an ADB-visible device, likely because hardware acceleration is unavailable for the installed
+  API 37 image. No physical TV or phone was connected.
+
+Known limitations:
+- Debug APKs only; no release keystore or signed release build.
+- The TV remote experience and actual video playback still need real-device verification.
+- Launcher icon lint warnings remain because the supplied raster icons fill their square region.
+- Backend extraction depends on provider availability and can vary by title.
+
+---
+
+Date: 2026-10-31
+Area: Android TV design and remote navigation
+
+Issue/Feature:
+The TV app felt less polished than the phone app. Focus highlights were basic, horizontal card rows did not scroll
+when focus moved to a card outside the viewport, the sidebar could not be reached from content lower down the
+page, cards looked too large, and the player seek bar could not be focused with the remote.
+
+What changed:
+The shared TV focus control now uses a soft cyan-and-white ring, a subtle glow, elevation and smooth scaling
+instead of the old hard border. Focused cards are drawn above their neighbours. Poster cards are smaller, the
+Continue Watching cards are narrower, and spacing around rows was increased so focus rings are not clipped.
+
+Horizontal movie and Continue Watching rows now have their own scroll controller. When a card receives focus,
+the row measures the card position and scrolls it into view with safe margins. The first card in a row or the
+first column of a grid now routes Left back to the selected navigation item, so the sidebar is reachable even
+when the page is scrolled far down. Row focus targets remain composed so navigation stays predictable.
+
+The TV player seek bar is now a real focus target. Pressing Down from the centre play/skip controls moves focus
+to it. Left and Right seek by 10 seconds, OK/Enter toggles playback, and Up returns to the centre controls.
+The seek bar shows buffered progress, a larger thumb when focused, and a hint line while it is active. Controls
+no longer auto-hide while the seek bar is focused.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/docs/README.md
+native/docs/QA_AUDIT.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The TV module compiles successfully, lint passes with 0 errors and the same 7 existing warnings, and the TV
+debug APK builds successfully. SHA-256 of the rebuilt TV APK is
+eacb6f2c4548a5f1d52e49afa4b6679b533e9dc46b6e2ef9930ee141aaf8af6b. The new focus, scrolling, sidebar
+and seek bar behaviour still needs real Android TV hardware verification because no TV or working emulator is
+available in this environment.
+
+---
+
+Date: 2026-11-01
+Area: TV player, Home, TV Details, View More collections
+
+Issue/Feature:
+Four things were requested. First, TV player controls had to hide again after the usual delay once seeking
+stopped, but must never disappear during active seeking. Second, the TV movie details page looked like a
+stretched phone screen instead of a premium TV page. Third, every home category such as Hindi or English
+needed a View More button in both apps. Fourth, both home screens needed more variety and a more premium
+Netflix or Prime feel.
+
+What changed:
+TV player: the seek bar used to keep the controls on screen permanently while it had focus. That exemption was
+removed. Every remote interaction now resets a single 6.5 second timer, including focusing and using the seek
+bar, so controls stay visible while seeking and disappear 6.5 seconds after the last interaction.
+
+TV Details: rebuilt as a TV-first page. It opens with a 590dp full-bleed backdrop, cinematic gradients, and
+the title, tagline, rating, certification, runtime or season count, language, genres, overview and action
+buttons laid over the artwork. Large screens also show the portrait poster as a floating card. Season chips,
+episode cards with stills, cast circles and a "More like this" row follow below. The Watch button focuses first
+and episode changes no longer steal focus.
+
+View More: home rows now come from nine curated TMDB queries (Top 10 Today, Now Playing, Blockbuster Hindi,
+English Picks, South Indian Hits, Latest Punjabi, Critically Acclaimed, Trending TV, Top Rated Series). Rows
+with a query show a View More action. It opens a full-screen collection with a poster grid, title and count,
+first-page load, Load More paging, retry on failure, and back navigation. The TV version is D-pad first and
+focuses the first poster. Top 10 rows show rank badges on the first ten posters only.
+
+Home: mobile and TV now share richer rows and friendly language names such as Hindi, English or Punjabi
+instead of raw language codes. The TV home gained a larger cinematic hero, metadata pills, row action buttons
+and vertical scroll-into-view for lower rows, and the duplicate Featured row was removed.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/data/Formatters.kt
+native/core/src/main/java/com/watchall/core/net/TmdbClient.kt
+native/core/src/main/java/com/watchall/core/repo/WatchAllRepository.kt
+native/core/src/main/java/com/watchall/core/vm/CollectionViewModel.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvCollectionScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/WatchAllMobileApp.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/Common.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/HomeScreen.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/CollectionScreen.kt
+native/docs/README.md
+native/docs/QA_AUDIT.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+Core, TV and mobile Kotlin compilation passed. TV and mobile lint passed with 0 errors and 7 warnings each.
+Both debug APKs built successfully. The curated TMDB queries were checked from the development machine and
+returned non-empty results. New APK sizes and SHA-256 values: mobile 24,627,401 bytes,
+63923f99845a1974c1850f0351a19a848445bf1383874aefdf0ce29fb7c4e73d; TV 24,101,336 bytes,
+64f8eaf9b799e54d66170f5676ad468603bb7f516315beff51117bfae046a0b9. Real-device checks for the seek bar
+hide timing, TV details focus path, View More paging and home row scrolling are still pending because no
+phone, TV or working emulator is available here.
+
+---
+
+Date: 2026-11-01
+Area: Backend connection and app configuration
+
+Issue/Feature:
+The development PC's Wi-Fi address changed from 192.168.1.7 to 192.168.1.4. The installed APKs were built
+with the old address, so the phone and TV apps could no longer reach the backend.
+
+What changed:
+The default backend address in native/local.properties was updated to http://192.168.1.4:3001 and both debug
+APKs were rebuilt. The setup documentation now uses the current address and notes that it is a DHCP address,
+so it can change again. If it does, the address can be changed in the app's Settings screen instead of
+rebuilding.
+
+Files affected:
+native/local.properties (gitignored)
+native/docs/README.md
+native/docs/QA_AUDIT.md
+native/docs/BUILD_AND_INSTALL.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The PC reports 192.168.1.4 on Wi-Fi. http://192.168.1.4:3001/api/servers returned HTTP 200 with the server
+list, while the old 192.168.1.7 timed out. The generated BuildConfig contains the new URL and both debug APKs
+rebuilt successfully. New SHA-256 values: mobile
+a318fe2572d614a54a95687d91626d0dfb9d5de5537465b11f9c2e8cbbabf2d2; TV
+bfb9ecf0f97ad03e2cbc524054c88ecf5fc20b475d24f7179a705bf9c1026f1f.
+
+---
+
+Date: 2026-11-01 to 2026-11-02
+Area: TV and phone interface, navigation and loading screens
+
+Issue/Feature:
+The TV app looked heavy and oversized. It used a 204 dp left rail, 172-204 dp poster cards, very large
+headings, a slow spring focus animation with a coloured shadow, and scroll rows that built every card
+even when it was off screen. Several headings were misaligned or clipped. The first load showed a blank
+or static screen with no animation. The phone app had a small size animation on every poster and no
+branded loading state.
+
+What changed:
+- TV navigation is now a fixed 58 dp bar across the top, with the WatchAll brand, five tabs, a cyan
+  tint on the selected tab and a small private/ad-free label. Pressing Down on the bar jumps into the
+  current screen's main action. Focus returns to the selected tab after closing a details or player
+  screen, and after switching tabs.
+- TV sizing is compact: 120 dp posters, 300 x 104 dp continue-watching cards, a 320 dp hero and 40 dp
+  page padding. A normal 1080p television now shows six full posters in a row instead of four.
+- TV focus movement is 110 ms, scales to 1.05 and draws a flat 2 dp cyan border. The animated shadow
+  was removed, so each D-pad press is much cheaper for the TV to draw.
+- TV media rows now use LazyRow and grids use LazyVerticalGrid, so cards that are not visible are no
+  longer created. Each tab also keeps its scroll position and state when switched away and back.
+- Every TV screen was rebuilt on the same compact pattern of heading, filters, lazy content and
+  load-more footer. Details has a 356 dp hero, horizontal episode cards and a cast row. Home has the
+  hero, continue watching and the curated rows. Browse, Search, Library, Collection and Settings were
+  all tightened to the same scale, and their headings now line up.
+- A branded loading mark, two rotating arcs around a pulsing gradient play tile, replaces the plain
+  spinner on first load, search, player start and buffering on both the TV and the phone.
+- TV Home shows a skeleton feed with one shared pulse animation while the first request runs, so the
+  screen is never blank or frozen.
+- Phone: the poster size animation was removed, negative letter spacing was removed from the brand,
+  tabs crossfade in 120 ms, overlays fade in 140 ms, and the player uses the branded loading mark. The
+  player itself does not fade because its video surface is drawn separately and would flash black.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/theme/TvTheme.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSearchScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvCollectionScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSettingsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/Common.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/WatchAllMobileApp.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+native/mobile/build.gradle.kts
+native/docs/README.md
+native/docs/ARCHITECTURE.md
+native/docs/QA_AUDIT.md
+native/docs/BUILD_AND_INSTALL.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+TV and phone Kotlin compilation passed. Both lint tasks passed with 0 errors and 7 warnings each, the
+same launcher-icon, orientation, cleartext and backup warnings as before. Both debug APKs built:
+mobile 24,627,401 bytes, SHA-256
+b7deb24f3e095ce66a7df07d7bb90e8108008f8aaf868d84465f6cab4e8ec09e; TV 24,102,425 bytes, SHA-256
+f9b5f78ec5ca4f767ec136dec6068c15abc8908fb2b5e3962745e8362637e94c.
+
+Real-device checking is still pending. No phone, Android TV or working emulator was available here, so
+focus timing on a real remote, the layout at 960 x 540 dp and the smoothness of the loader and skeleton
+have not been seen on hardware yet.
+
+Date: Mon Nov 02 2026
+Area: Android TV design, cast pages and playback
+
+Issue/Feature:
+The TV app had section headings that were too quiet at couch distance, white pill-shaped buttons with
+weak focus states, cast that could not be selected, no server choice before playback, a Details page
+that stayed scrolled down when focus returned to the play button, and a player with unclear remote
+navigation.
+
+What was changed and how it works now:
+- Section headings are now 22 sp bold with a cyan accent bar, and page titles are 30 sp, so every
+  section on Home, Details, Library, Search and Collection is easy to read from a distance.
+- Buttons were rebuilt. The primary action uses a cyan/teal gradient with dark text, secondary
+  buttons use a dark card fill, corners dropped to 9 dp, and focused buttons brighten, scale and gain
+  a coloured border. Chips, pills, View More, navigation tabs and icon buttons follow the same style.
+  Disabled buttons are visibly muted.
+- Cast cards on Details are now focusable. Selecting one opens a new filmography page with the
+  person's photo, movie and TV counts, All/Movies/TV filters, and loading, retry and empty states. The
+  list comes from TMDB combined credits, removes duplicates and keeps the most popular titles.
+- Pressing the main play button on Details or the Home hero movie now opens a server chooser like the
+  web player. It lists every server list, marks Server List 2 as movies-only (disabled for TV shows),
+  focuses the first available option, and returns focus to the play button when cancelled or closed
+  with Back.
+- Returning focus to the Details play button from More like this or another lower row now scrolls the
+  page back to the top of the hero.
+- The TV player now has four explicit focus zones: top bar, centre transport, seek bar, and bottom
+  action row. Up/Down move between them, Left/Right seek on the bar, sheets have a visible Close
+  button, and closing a sheet puts focus back on the control that opened it. The loading and error
+  screens no longer fight the sheet for focus.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/net/TmdbClient.kt
+native/core/src/main/java/com/watchall/core/net/TmdbDtos.kt
+native/core/src/main/java/com/watchall/core/repo/WatchAllRepository.kt
+native/core/src/main/java/com/watchall/core/vm/PersonViewModel.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvSourcePickerDialog.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPersonScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSearchScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvCollectionScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/Models.kt
+native/docs/README.md
+native/docs/ARCHITECTURE.md
+native/docs/QA_AUDIT.md
+native/docs/IMPLEMENTATION_LOG.txt
+docs/IMPLEMENTATION_LOG.txt
+
+Verified:
+The TV module compiled with :tv:compileDebugKotlin. :tv:lintDebug and :tv:assembleDebug both passed;
+lint reports 0 errors and 7 warnings, all pre-existing (launcher icon shape, fixed orientation,
+cleartext network configuration and backup attributes). The debug APK is 24,241,956 bytes (23.12 MB)
+with SHA-256 D3F102C03DCF7A1EF836F3D0A4FB04EEFB3ED1F21E040308ECE385DD2655B343.
+
+Real-device checking is still pending. No phone, Android TV or working emulator was available here, so
+headings at 10-foot distance, D-pad focus timing, the new filmography page, the server chooser and the
+player focus zones have not been seen on hardware.

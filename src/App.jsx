@@ -7,6 +7,7 @@ import HomePage from "./Pages/HomePage";
 import TVShows from "./Pages/TVShows";
 import Genres from "./Pages/Genres";
 import VideoPlayer from "./Pages/VideoPlayer";
+import CollectionPage from "./Pages/CollectionPage";
 
 function App() {
   const { pathname } = useLocation();
@@ -35,6 +36,7 @@ function App() {
           <Route path="/movies" element={<Movies />} />
           <Route path="/movies/hindi" element={<Movies language="hi" />} />
           <Route path="/movies/english" element={<Movies language="en" />} />
+          <Route path="/collection/:slug" element={<CollectionPage />} />
           <Route path="/tv" element={<TVShows />} />
           <Route path="/genres" element={<Genres />} />
           <Route path="/movie/:id/:title" element={<Movies />} />

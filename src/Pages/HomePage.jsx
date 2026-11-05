@@ -1,8 +1,7 @@
 import React from "react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import SearchBar from "../Components/SearchBar";
-import MoviesList from "../Sections/MoviesList";
-import TvList from "../Sections/TvList";
+import HomeRows from "../Sections/HomeRows";
 import GetFeaturedMovies from "../Services/getFeaturedMovies";
 // import MovieStreamer from "./testplyaer";
 
@@ -31,8 +30,7 @@ function HomePage() {
       <div className="mt-10 ">
         <GetFeaturedMovies />
 
-        <MoviesList />
-        <TvList />
+        <HomeRows />
       </div>
       {/* TV Shows */}
     </>

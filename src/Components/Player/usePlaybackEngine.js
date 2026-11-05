@@ -4,10 +4,14 @@ import {
   audioTrackMatchesLanguage,
   captionsKey,
   clamp,
+  codecKind,
   detectSourceType,
+  deviceSupportsHevc,
   hlsConfigFor,
   maxQualityIndex,
+  parseSubtitleText,
   prefsKey,
+  proxyUrl,
   readStore,
   sniffSourceType,
   streamUrlFor,
@@ -97,9 +101,16 @@ export function usePlaybackEngine({
   const captionsPrefRef = useRef(!!readStore(captionsKey, false));
   const prefsRef = useRef(null);
   const snapshotRef = useRef(null);
+  const candidatesRef = useRef([]);
+  const candidateIndexRef = useRef(0);
+  const mp4StreamsRef = useRef([]);
+  const captionsLoadedRef = useRef(false);
+  const externalTracksRef = useRef([]);
+  const retryTimersRef = useRef(new Set());
   const [snapshot, setSnapshot] = useState(makeSnapshot);
   const [resumedFrom, setResumedFrom] = useState(0);
   const [reloadToken, setReloadToken] = useState(0);
+  const [candidateToken, setCandidateToken] = useState(0);
 
   profileRef.current = profile;
   onFatalRef.current = onFatalError;
@@ -148,6 +159,32 @@ export function usePlaybackEngine({
   const failPlayback = useCallback(
     (error) => {
       if (fatalRef.current) return;
+
+      // Before surfacing an error, walk the remaining formats the server found
+      // (DASH -> HLS -> MP4, HEVC -> H.264). This keeps a single broken
+      // manifest from ending playback when a playable alternative exists.
+      const candidates = candidatesRef.current || [];
+      const nextIndex = candidateIndexRef.current + 1;
+      if (nextIndex < candidates.length) {
+        candidateIndexRef.current = nextIndex;
+        setSnapshot((previous) => ({
+          ...previous,
+          status: "loading",
+          engine: "",
+          error: null,
+          isBuffering: false,
+          qualities: [],
+          quality: -1,
+          bitrate: 0,
+          audioTracks: [],
+          audioTrack: -1,
+          textTracks: [],
+          textTrack: -1,
+        }));
+        setCandidateToken((value) => value + 1);
+        return;
+      }
+
       fatalRef.current = true;
       setSnapshot((previous) => ({
         ...previous,
@@ -269,6 +306,22 @@ export function usePlaybackEngine({
         void error;
       }
       setSnapshot((previous) => ({ ...previous, quality }));
+      return;
+    }
+
+    // Progressive MP4 has no adaptive ladder, so the quality menu switches the
+    // whole source URL while keeping the current playback position.
+    const target = mp4StreamsRef.current[quality];
+    if (target?.url) {
+      const index = (candidatesRef.current || []).findIndex(
+        (item) => item.url === target.url
+      );
+      if (index >= 0) {
+        candidateIndexRef.current = index;
+        fatalRef.current = false;
+        setSnapshot((previous) => ({ ...previous, quality }));
+        setCandidateToken((value) => value + 1);
+      }
     }
   }, []);
 
@@ -332,7 +385,13 @@ export function usePlaybackEngine({
     const player = dashRef.current;
     if (player) {
       try {
-        player.setTextTrack(trackIndex);
+        const tracks = player.getTracksFor?.("text") || [];
+        const selected = tracks[trackIndex];
+        if (selected && Number.isFinite(selected.index)) {
+          player.setTextTrack(selected.index);
+        } else {
+          player.setTextTrack(trackIndex);
+        }
       } catch (error) {
         void error;
       }
@@ -381,6 +440,86 @@ export function usePlaybackEngine({
   }, []);
 
   const clearResumeNotice = useCallback(() => setResumedFrom(0), []);
+
+  // External subtitle discovery runs only after the first frame is playing.
+  // Netnaija-style sources expose a caption endpoint separately from the video,
+  // so waiting for it here costs nothing on startup.
+  const loadExternalCaptions = useCallback(async () => {
+    if (captionsLoadedRef.current) return;
+    captionsLoadedRef.current = true;
+    const current = sourceRef.current;
+    if (!current) return;
+
+    let list = Array.isArray(current.captions)
+      ? current.captions.filter((item) => item && item.url)
+      : [];
+
+    if (!list.length && current.captionsUrl) {
+      try {
+        const response = await fetch(current.captionsUrl);
+        const data = await response.json().catch(() => null);
+        if (Array.isArray(data?.captions)) {
+          list = data.captions.filter((item) => item && item.url);
+        }
+      } catch (error) {
+        void error;
+      }
+    }
+    if (!list.length) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+    const CueCtor = window.VTTCue || window.TextTrackCue;
+    if (!CueCtor) return;
+
+    for (const item of list.slice(0, 8)) {
+      try {
+        const url = /^https?:\/\//i.test(item.url)
+          ? proxyUrl(item.url, "vtt", current.referer || "")
+          : item.url;
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const text = await response.text();
+        const cues = parseSubtitleText(text);
+        if (!cues.length) continue;
+        const label =
+          item.label ||
+          item.language ||
+          `Subtitles ${externalTracksRef.current.length + 1}`;
+        const language = item.language || "";
+        const track = video.addTextTrack("subtitles", label, language);
+        cues.forEach((cue) => {
+          try {
+            track.addCue(new CueCtor(cue.start, cue.end, cue.text));
+          } catch (error) {
+            void error;
+          }
+        });
+        externalTracksRef.current.push({ label, language, track });
+      } catch (error) {
+        void error;
+      }
+    }
+
+    if (!externalTracksRef.current.length) return;
+    const tracks = Array.from(video.textTracks).map((track, index) => ({
+      id: index,
+      label: track.label,
+      language: track.language,
+      kind: track.kind,
+      mode: track.mode,
+    }));
+    let textTrack = tracks.findIndex((track) => track.mode === "showing");
+    if (textTrack < 0 && captionsPrefRef.current && tracks.length) {
+      textTrack = 0;
+      try {
+        video.textTracks[0].mode = "showing";
+      } catch (error) {
+        void error;
+      }
+    }
+    patch({ textTracks: tracks, textTrack });
+  }, [patch]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -481,6 +620,7 @@ export function usePlaybackEngine({
 
     const onPlaying = () => {
       patch({ status: "playing", autoplayBlocked: false, isBuffering: false });
+      loadExternalCaptions();
     };
 
     const onPause = () => {
@@ -489,7 +629,10 @@ export function usePlaybackEngine({
     };
 
     const onWaiting = () => {
-      if (!video.paused) patch({ isBuffering: true });
+      // Only show the spinner when the browser really cannot render frames.
+      // `waiting` also fires briefly during ordinary ABR switches; readyState
+      // 3/4 means the current frame is already playable.
+      if (!video.paused && video.readyState < 3) patch({ isBuffering: true });
     };
 
     const onCanPlay = () => patch({ isBuffering: false });
@@ -554,7 +697,7 @@ export function usePlaybackEngine({
       video.removeEventListener("ratechange", onRateChange);
       video.removeEventListener("error", onVideoError);
     };
-  }, [failPlayback, patch]);
+  }, [failPlayback, loadExternalCaptions, patch]);
 
   useEffect(() => {
     setResumedFrom(0);
@@ -568,6 +711,30 @@ export function usePlaybackEngine({
   const sourceForceProxy = !!source?.forceProxy;
   const sourceReferer = source?.referer || "";
   const sourceKey = `${sourceUrl}|${sourceType}|${sourceForceProxy ? "proxy" : "direct"}|${sourceReferer}`;
+
+  const mp4Streams = (Array.isArray(source?.streams) ? source.streams : [])
+    .filter((item) => item && item.url)
+    .map((item) => ({
+      ...item,
+      quality: Number(item.quality || item.height || 0),
+    }))
+    .sort((a, b) => b.quality - a.quality);
+  mp4StreamsRef.current = mp4Streams;
+
+  const sourceCandidates =
+    Array.isArray(source?.candidates) && source.candidates.length
+      ? source.candidates
+      : sourceUrl
+        ? [{ url: sourceUrl, type: sourceType, verified: true }]
+        : [];
+  candidatesRef.current = sourceCandidates;
+
+  useEffect(() => {
+    candidateIndexRef.current = 0;
+    captionsLoadedRef.current = false;
+    externalTracksRef.current = [];
+    fatalRef.current = false;
+  }, [sourceKey]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -635,6 +802,7 @@ export function usePlaybackEngine({
     let networkRetries = 0;
     let mediaRetries = 0;
     const device = profileRef.current;
+    const retryTimers = retryTimersRef.current;
 
     const tryAutoplay = () => {
       if (cancelled) return;
@@ -651,11 +819,30 @@ export function usePlaybackEngine({
       }
     };
 
-    const attachNative = (mediaUrl, nativeType) => {
+    const attachNative = (mediaUrl, nativeType, originalUrl = "") => {
       attachedRef.current = true;
       video.src = mediaUrl;
       video.load();
-      patch({ engine: nativeType || "native" });
+      const mp4Options =
+        nativeType === "mp4" && mp4StreamsRef.current.length
+          ? mp4StreamsRef.current
+          : [];
+      const activeQuality = mp4Options.findIndex(
+        (item) => item.url === originalUrl
+      );
+      patch({
+        engine: nativeType || "native",
+        ...(mp4Options.length
+          ? {
+              qualities: mp4Options.map((item, index) => ({
+                id: index,
+                height: item.quality,
+                bitrate: Number(item.bitrate) || 0,
+              })),
+              quality: activeQuality >= 0 ? activeQuality : -1,
+            }
+          : {}),
+      });
 
       const syncNativeTracks = () => {
         const textTracks = video.textTracks
@@ -787,13 +974,44 @@ export function usePlaybackEngine({
         });
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          const qualities = hls.levels.map((level, index) => ({
-            id: index,
-            height: level.height,
-            width: level.width,
-            bitrate: level.bitrate,
-            frameRate: level.frameRate,
+          const hevcSupported = deviceSupportsHevc();
+          const levels = hls.levels.map((level, index) => {
+            const codec = codecKind(level.videoCodec || level.attrs?.CODECS);
+            return {
+              id: index,
+              height: level.height,
+              width: level.width,
+              bitrate: level.bitrate,
+              frameRate: level.frameRate,
+              codec,
+            };
+          });
+          const qualities = levels.map(({ codec, ...rest }) => ({
+            ...rest,
+            codec,
           }));
+          const hevcLevels = levels.filter((level) => level.codec === "hevc");
+          if (hevcLevels.length) {
+            if (hevcSupported) {
+              // Start on the smallest HEVC rendition; ABR upgrades from there.
+              try {
+                hls.startLevel = hevcLevels[0].id;
+              } catch (error) {
+                void error;
+              }
+            } else {
+              const firstPlayable = levels.find(
+                (level) => level.codec !== "hevc"
+              );
+              if (firstPlayable) {
+                try {
+                  hls.startLevel = firstPlayable.id;
+                } catch (error) {
+                  void error;
+                }
+              }
+            }
+          }
           if (device.lowPower || device.isTV) {
             const cap = maxQualityIndex(qualities, 1080);
             if (cap >= 0 && cap < qualities.length - 1) hls.autoLevelCapping = cap;
@@ -836,22 +1054,34 @@ export function usePlaybackEngine({
 
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (!data?.fatal) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 3) {
             networkRetries += 1;
-            try {
-              hls.startLoad();
-            } catch (error) {
-              void error;
-            }
+            const delay = 500 * 2 ** (networkRetries - 1);
+            const timer = window.setTimeout(() => {
+              retryTimers.delete(timer);
+              if (cancelled) return;
+              try {
+                hls.startLoad();
+              } catch (error) {
+                void error;
+              }
+            }, delay);
+            retryTimers.add(timer);
             return;
           }
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 1) {
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) {
             mediaRetries += 1;
-            try {
-              hls.recoverMediaError();
-            } catch (error) {
-              void error;
-            }
+            const delay = 600 * 2 ** (mediaRetries - 1);
+            const timer = window.setTimeout(() => {
+              retryTimers.delete(timer);
+              if (cancelled) return;
+              try {
+                hls.recoverMediaError();
+              } catch (error) {
+                void error;
+              }
+            }, delay);
+            retryTimers.add(timer);
             return;
           }
           const network = data.type === Hls.ErrorTypes.NETWORK_ERROR;
@@ -899,8 +1129,15 @@ export function usePlaybackEngine({
         try {
           player.updateSettings({
             streaming: {
-              abr: { autoSwitchBitrate: { video: true, audio: true } },
-              buffer: { fastSwitchEnabled: true },
+              abr: {
+                autoSwitchBitrate: { video: true, audio: true },
+                initialBitrate: { video: device.lowPower ? 500 : 800 },
+                limitBitrateByPortal: true,
+              },
+              buffer: {
+                fastSwitchEnabled: true,
+                stableBufferTime: device.lowPower ? 12 : 20,
+              },
             },
           });
         } catch (error) {
@@ -916,6 +1153,7 @@ export function usePlaybackEngine({
                 height: item.height,
                 width: item.width,
                 bitrate: item.bandwidth || item.bitrateInKbit * 1000,
+                codec: codecKind(item.codec || item.mimeType),
               })
             );
           } catch {
@@ -1047,21 +1285,26 @@ export function usePlaybackEngine({
     let cleanupInner = null;
 
     const begin = async () => {
-      let type = detectSourceType(sourceUrl, sourceType);
-      if (!type) type = await sniffSourceType(sourceUrl);
+      const candidate =
+        candidatesRef.current[candidateIndexRef.current] ||
+        (sourceUrl ? { url: sourceUrl, type: sourceType } : null);
+      const activeUrl = candidate?.url || sourceUrl;
+      if (!activeUrl) return;
+      let type = detectSourceType(activeUrl, candidate?.type || sourceType);
+      if (!type) type = await sniffSourceType(activeUrl);
       if (cancelled) return;
       if (!type) {
         type = Hls.isSupported() ? "hls" : "mp4";
       }
-      const mediaUrl = streamUrlFor(type, sourceUrl, {
-        forceProxy: sourceForceProxy,
-        referer: sourceReferer,
+      const mediaUrl = streamUrlFor(type, activeUrl, {
+        forceProxy: sourceForceProxy || !!candidate?.forceProxy,
+        referer: candidate?.referer || sourceReferer,
       });
       patch({ engine: type });
 
       if (type === "hls") cleanupInner = attachHls(mediaUrl);
       else if (type === "dash") cleanupInner = await attachDash(mediaUrl);
-      else cleanupInner = attachNative(mediaUrl, "mp4");
+      else cleanupInner = attachNative(mediaUrl, "mp4", activeUrl);
     };
 
     begin().catch((error) => {
@@ -1089,11 +1332,14 @@ export function usePlaybackEngine({
         void error;
       }
       if (typeof cleanupInner === "function") cleanupInner();
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
+      retryTimers.clear();
       destroyEngines();
     };
   }, [
     sourceKey,
     reloadToken,
+    candidateToken,
     failPlayback,
     patch,
     sourceType,

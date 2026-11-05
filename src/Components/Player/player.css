@@ -699,8 +699,8 @@
   width: calc(100% + 80px);
   height: calc(100% + 80px);
   object-fit: cover;
-  opacity: 0.42;
-  filter: blur(24px) saturate(115%);
+  opacity: 0.52;
+  filter: blur(12px) saturate(112%);
   transform: scale(1.04);
 }
 
@@ -708,8 +708,8 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 50% 45%, transparent 0%, rgba(3, 5, 11, 0.55) 45%, rgba(3, 5, 11, 0.96) 100%),
-    linear-gradient(180deg, rgba(3, 5, 11, 0.5), rgba(3, 5, 11, 0.88));
+    radial-gradient(circle at 50% 45%, rgba(3, 5, 11, 0.08) 0%, rgba(3, 5, 11, 0.36) 45%, rgba(3, 5, 11, 0.86) 100%),
+    linear-gradient(180deg, rgba(3, 5, 11, 0.28), rgba(3, 5, 11, 0.72));
 }
 
 .wa-loading-content {

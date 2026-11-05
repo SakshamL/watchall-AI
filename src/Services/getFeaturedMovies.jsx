@@ -73,7 +73,6 @@ const GetFeaturedMovies = () => {
               poster={POSTER_PATH + movie.poster_path}
               vote={movie.vote_average}
             />
-            ;
           </div>
         );
       })}

@@ -76,10 +76,80 @@ const formatDate = (date) => date.toISOString().split("T")[0];
 
 // hi: Hindi, en: English, pa: Punjabi, te: Telugu, ta: Tamil, ml: Malayalam, kn: Kannada
 const languages = ["hi", "en", "pa", "te", "ta", "ml", "kn"].join("|");
+const indianLanguages = ["hi", "pa", "te", "ta", "ml", "kn"].join("|");
+const southLanguages = ["te", "ta", "ml", "kn"].join("|");
+const restIndianLanguages = [
+  "te",
+  "ta",
+  "ml",
+  "kn",
+  "mr",
+  "bn",
+  "gu",
+  "ur",
+  "or",
+  "as",
+  "ne",
+  "si",
+].join("|");
+const nowPlayingLanguages = ["hi", "en", "pa", restIndianLanguages].join("|");
 const langHindi = "hi";
 const langEng = "en";
 const langPunjabi = "pa";
 const releaseTypes = "2|3|4";
+
+// Rolling release window used by the home rows.
+const daysAgo = (days) => {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return formatDate(date);
+};
+
+const nowPlayingWindowDays = 90;
+
+const nowPlayingQuery = (language, page = 1) =>
+  fetchFromTMDB(
+    "/discover/movie",
+    `&page=${page}&region=IN&with_release_type=3&with_original_language=${language}&release_date.gte=${daysAgo(
+      nowPlayingWindowDays,
+    )}&release_date.lte=${todayFullDate}&sort_by=popularity.desc&vote_count.gte=1&include_adult=false`,
+  );
+
+// Delhi-first mix requested for the Now Playing row. Each group keeps its own
+// popularity order, and the groups are concatenated Hindi -> English -> Punjabi -> rest.
+const nowPlayingGroups = [
+  { language: langHindi, limit: 7 },
+  { language: langEng, limit: 4 },
+  { language: langPunjabi, limit: 3 },
+  { language: restIndianLanguages, limit: 4 },
+];
+
+const loadNowPlayingRow = async () => {
+  const responses = await Promise.all(
+    nowPlayingGroups.map((group) => nowPlayingQuery(group.language, 1)),
+  );
+
+  const seen = new Set();
+  const results = [];
+
+  responses.forEach((data, index) => {
+    const group = nowPlayingGroups[index];
+    let taken = 0;
+
+    for (const item of data?.results || []) {
+      if (taken >= group.limit) break;
+      if (!item || item.adult || !item.poster_path || seen.has(item.id)) {
+        continue;
+      }
+      if (!item.title && !item.name) continue;
+      seen.add(item.id);
+      results.push(item);
+      taken += 1;
+    }
+  });
+
+  return { results };
+};
 
 export const movieAPI = {
   getHindiMovies: (page = 1) =>
@@ -133,9 +203,63 @@ export const movieAPI = {
   getNowPlaying: (page = 1) =>
     fetchFromTMDB(
       "/discover/movie",
-      `&region=IN&sort_by=popularity.desc&with_release_type=3&with_original_language=${langHindi}&release_date.gte=${formatDate(
+      `&page=${page}&region=IN&sort_by=popularity.desc&with_release_type=3&with_original_language=${langHindi}&release_date.gte=${formatDate(
         startDate,
       )}&release_date.lte=${formatDate(today)}&language=en-US`,
+    ),
+
+  /* ------------------------------------------------------------------ */
+  /* Home rows                                                          */
+  /* ------------------------------------------------------------------ */
+
+  // The whole country is watching: recent Indian releases, ranked on Home.
+  getTop10Today: (page = 1) =>
+    fetchFromTMDB(
+      "/discover/movie",
+      `&page=${page}&region=IN&with_release_type=${releaseTypes}&with_original_language=${indianLanguages}&release_date.gte=${daysAgo(
+        90,
+      )}&release_date.lte=${todayFullDate}&sort_by=popularity.desc&vote_count.gte=20&include_adult=false`,
+    ),
+
+  // Fresh theatrical releases across Hindi, English, Punjabi and the rest of
+  // India. Used by the Now Playing collection page.
+  getNowPlayingMovies: (page = 1) => nowPlayingQuery(nowPlayingLanguages, page),
+
+  // Delhi-first Now Playing row: Hindi, then English, then Punjabi, then rest.
+  getNowPlayingRow: loadNowPlayingRow,
+
+  // Latest Punjabi releases from the last few months, newest first.
+  getLatestPunjabiMovies: (page = 1) =>
+    fetchFromTMDB(
+      "/discover/movie",
+      `&page=${page}&region=IN&with_release_type=${releaseTypes}&with_original_language=${langPunjabi}&release_date.gte=${daysAgo(
+        180,
+      )}&release_date.lte=${todayFullDate}&sort_by=release_date.desc&vote_count.gte=1&include_adult=false`,
+    ),
+
+  // Telugu, Tamil, Malayalam and Kannada crowd-pleasers.
+  getSouthIndianMovies: (page = 1) =>
+    fetchFromTMDB(
+      "/discover/movie",
+      `&page=${page}&region=IN&with_release_type=${releaseTypes}&with_original_language=${southLanguages}&release_date.lte=${todayFullDate}&sort_by=popularity.desc&vote_count.gte=15&include_adult=false`,
+    ),
+
+  // Well-reviewed films with enough votes to keep the list credible.
+  getCriticallyAcclaimedMovies: (page = 1) =>
+    fetchFromTMDB(
+      "/discover/movie",
+      `&page=${page}&region=IN&with_original_language=${indianLanguages}&release_date.lte=${todayFullDate}&sort_by=vote_average.desc&vote_average.gte=7.4&vote_count.gte=400&include_adult=false`,
+    ),
+
+  // The week's most-watched series worldwide, mirroring the native TV row.
+  getTrendingTvShows: (page = 1) =>
+    fetchFromTMDB("/trending/tv/week", `&page=${page}`),
+
+  // Highest rated series of all time, with a vote floor so one-off ratings do not win.
+  getTopRatedTvShows: (page = 1) =>
+    fetchFromTMDB(
+      "/discover/tv",
+      `&page=${page}&sort_by=vote_average.desc&vote_average.gte=8&vote_count.gte=1000&include_adult=false&include_null_first_air_dates=false`,
     ),
 
   getMovieDetails: (id = "") => fetchFromTMDB(`/movie/${id}`, ``),

@@ -537,3 +537,189 @@ Verified:
 A targeted ESLint check of the two player component files reports no errors, and the production build passes. Headless Chrome was used with the extraction request deliberately failing. With Server List 2 failed, the error box showed "Try Server List 1" as the focused main button, "Try again", "Choose server" and "Go back", with no provider names. Clicking the main button changed the address to the default list, showed "Trying Server List 1..." and then failed again as expected. The second error made "Try again" the main button, showed "Try Server List 2 again", and displayed the both-lists note. Tab stayed inside, and pressing "Try again" showed "Trying Server List 1..." rather than the generic loading text.
 
 A successful switch in both directions was also checked: Server List 2 failed and Server List 1 then played the real stream, and Server List 1 failed and Server List 2 then played with the chip "Server List 2". Both showed no provider names in the page. A TV-sized check at 1920x1080 started focus on the main list button, and ArrowDown moved to "Try again" instead of skipping to "Go back"; Escape left the player. A phone check at 390x844 showed the error box fitting inside the screen with no horizontal overflow, the main and back buttons at 317px wide and the two middle buttons at 154px each. The only console messages in the failure tests were the deliberate test 502 responses. A playback failure was not forced on a real stream, but its retry button uses the same tested retry path. A full-project lint still reports older errors in unrelated pages and components. Physical phones, TV hardware and Safari were not tested.
+
+Date: Wed Nov 04 2026
+Area: Streaming optimization (web, mobile, TV)
+
+Issue/Feature:
+Implemented the cross-platform streaming checklist: DASH-first candidate extraction, HEVC
+preference, dual-format fallback, subtitles, idle prefetch, proxy/range handling, manifest/init
+caching, resolution selection, error retry/fallback, and player buffering/UI tuning.
+
+What was changed and how it works now:
+- Server: /api/extract now returns hls, dash, mp4, streams, candidates, captionsUrl, captions and
+  forceProxy. DASH is tried before HLS in both forced-server and default branches. Added separate
+  manifest cache (5 min TTL) and init-segment cache (30 min TTL). Added /api/netnaija/captions
+  proxy trying stream-captions then captions with normalizeCaptions. Netnaija streams are sorted
+  by resolution and returned with candidates/captions.
+- Web: playerUtils gained HEVC detection, codec/height parsing, buildStreamCandidates, subtitle
+  parser; streamUrlFor proxies all MP4. HLS starts at level 0 with ABR estimate. Added
+  Services/streamPrefetch.js with capped queue (1 active, 4 queued), 2.5 min TTL, and visible-card
+  IntersectionObserver. HomePosterCard/HomeWideCard attach prefetch refs. VideoPlayer consumes
+  prefetched data and builds candidate source. usePlaybackEngine now walks candidate formats on
+  failure, switches MP4 variants by URL, gates buffering on readyState < 3, loads external captions
+  after playing, retries HLS with exponential backoff, starts HEVC when supported, and uses low
+  initial DASH bitrate.
+- Native: StreamResult/StreamVariant/CaptionTrack models; WatchAllApi maps all server fields and
+  builds variants. PlayerViewModel tries alternate variants before switching servers and exposes
+  selectVariant. PlaybackController prefers HEVC, starts at 720p and upgrades to 1080p after
+  10s, attaches external subtitles, and exposes onVariantRequested. Mobile and TV screens key
+  reloads on the active variant, pass playback position on failure, wire variant switching, and
+  list MP4 variants in the quality sheet.
+
+Files affected:
+server/index.js; src/Components/Player/playerUtils.js; src/Components/Player/usePlaybackEngine.js;
+src/Components/HomePosterCard.jsx; src/Components/HomeWideCard.jsx; src/Pages/VideoPlayer.jsx;
+src/Services/streamPrefetch.js; native/core/.../data/Models.kt; native/core/.../net/WatchAllApi.kt;
+native/core/.../vm/PlayerViewModel.kt; native/core/.../playback/PlaybackController.kt;
+native/mobile/.../PlayerScreen.kt; native/tv/.../TvPlayerScreen.kt; docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+npm run build succeeded; npm run lint clean on changed web files. node --check server/index.js
+passed. Gradle :core, :mobile and :tv compileDebugKotlin succeeded offline. :tv:assembleDebug and
+:mobile:assembleDebug succeeded; APKs rebuilt. No device/emulator available, so DASH/HEVC and
+subtitle runtime behavior were not exercised on hardware.
+
+Date: Wed Nov 04 2026
+Area: Subtitles (web, native)
+
+Issue/Feature:
+Subtitle selection worked in the UI but cues were not rendered on the video.
+
+What was changed and how it works now:
+- Web: dash.js subtitle selection now resolves the selected track's underlying index before
+  calling setTextTrack, so the chosen track actually renders.
+- Native: PlaybackController now enables the text track renderer when external subtitles are
+  attached (rebuilt track selection parameters after adding subtitle configurations), and
+  keeps embedded tracks selectable.
+
+Files affected:
+src/Components/Player/usePlaybackEngine.js; native/core/.../playback/PlaybackController.kt;
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+npm run build succeeded; Gradle :core/:mobile/:tv compileDebugKotlin and assembleDebug succeeded
+offline. No device available for on-screen subtitle verification.
+
+Date: Wed Nov 04 2026
+Area: Mobile player UX
+
+Issue/Feature:
+Added screen-fit modes, swipe brightness/volume gestures, and (attempted) sleeker seekbar.
+
+What was changed and how it works now:
+- Mobile PlayerScreen now cycles Fit/Crop/Zoom resize modes via a top-bar button, applied
+  live to PlayerView through resizeMode state and AndroidView update.
+- Left/right vertical drag gestures adjust screen brightness (left) and media volume (right),
+  with a centered overlay showing the current percentage that auto-hides.
+- Seekbar remains the standard Material slider (custom thin track not applied due to Compose
+  API mismatch; can be revisited).
+
+Files affected:
+native/mobile/.../PlayerScreen.kt; docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+Gradle :mobile:compileDebugKotlin and :mobile:assembleDebug succeeded offline. No device
+available for gesture/render verification.
+
+Date: Wed Nov 04 2026
+Area: Mobile player controls
+
+Issue/Feature:
+Controls became inaccessible after changing fit mode; swipe gestures inconsistent; fit icon
+moved to bottom options.
+
+What was changed and how it works now:
+- Replaced separate left/right gesture overlays (which blocked taps) with a single full-screen
+  pointer input combining vertical-drag brightness/volume and tap-to-toggle controls, so taps
+  still work in any fit mode.
+- Moved the Fit/Crop/Zoom control from the top bar into the bottom action row.
+- Removed the now-unused half-screen overlays.
+
+Files affected:
+native/mobile/.../PlayerScreen.kt; docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+Gradle :mobile:compileDebugKotlin and :mobile:assembleDebug succeeded offline. No device
+available for gesture/render verification.
+
+Date: Thu Nov 05 2026
+Area: Mobile app features and backend URL
+
+Issue/Feature:
+The mobile app was missing a Browse tab, infinite loading in "View more" pages, mixed-language
+related titles, Continue Watching removal, and per-item search-history removal. Native builds
+also still pointed at the old local network server by default.
+
+What was changed and how it works now:
+- The native default backend is now https://watchall-media.vercel.app (shared local.properties
+  and the Gradle fallback), so new mobile and TV builds use the Vercel deployment.
+- Added a Browse tab to the mobile bottom navigation with Movies/TV Shows, language, and genre
+  filters. It loads more titles automatically as the user scrolls near the end.
+- "View more" collection pages now also load the next page automatically when the grid nears
+  the end, so users no longer have to tap "Load more" repeatedly.
+- Related titles on details pages now prioritise the current title's original language, then
+  TMDB recommendations, then a mixed Hindi/English/regional-language selection from the same
+  genre. This replaces the mostly English-only "More like this" row.
+- Continue Watching cards now have a small remove (X) button on both Home and Library. Removing
+  an item clears its saved playback progress immediately.
+- Recent searches now have an individual remove (X) button alongside the existing "Clear all"
+  action. Tapping a recent search still reuses it and duplicates are avoided.
+
+Files affected:
+native/local.properties; native/core/build.gradle.kts;
+native/core/.../prefs/PreferencesStore.kt; native/core/.../repo/WatchAllRepository.kt;
+native/core/.../vm/HomeViewModel.kt; native/core/.../vm/SearchViewModel.kt;
+native/core/.../net/TmdbClient.kt;
+native/mobile/.../ui/WatchAllMobileApp.kt;
+native/mobile/.../ui/screens/BrowseScreen.kt (new);
+native/mobile/.../ui/screens/CollectionScreen.kt;
+native/mobile/.../ui/screens/HomeScreen.kt;
+native/mobile/.../ui/screens/LibraryScreen.kt;
+native/mobile/.../ui/screens/SearchScreen.kt;
+native/mobile/.../ui/components/Common.kt; docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+Gradle :core, :mobile and :tv compileDebugKotlin succeeded offline. :mobile:assembleDebug
+succeeded and the mobile APK was rebuilt. No phone/emulator was available, so the new tab,
+infinite scrolling, and removal buttons were not visually exercised on a device.
+
+Date: Thu Nov 05 2026
+Area: Server List 2 (VidNest) extraction and mobile server picker
+
+Issue/Feature:
+Titles opened from Server List 2 (VidNest) failed with "The server list did not load any
+playable stream" even when the same title played on the VidNest website. The mobile app also
+started playback immediately instead of letting the user pick a server first, unlike the TV app.
+
+What was changed and how it works now:
+- VidNest changed its site: streams are now resolved through an API at new.vidnest.fun that
+  requires a random per-request nonce and returns AES-256-GCM encrypted responses. The old
+  extractor opened the player page in a headless browser, which now times out (and often got a
+  Cloudflare 502 from the default provider), so it never found a stream.
+- Replaced that browser probe with a direct API client in server/vidnest-extractor.cjs. It asks
+  all 12 VidNest providers in parallel, decrypts each reply, normalises the returned HLS/DASH/MP4
+  links, probes the manifests for liveness and real resolution, and ranks results by language,
+  format and quality. Relative paths (used by the Alfa provider) are prefixed with the same
+  Cloudflare worker hosts the site itself uses.
+- The extract endpoint now passes type/season/episode to the extractor and caches per episode,
+  so TV shows use VidNest's TV routes. The response also includes the provider name and a
+  fallback list of verified candidate streams.
+- Mobile now shows a "Choose a server" dialog before playback for every entry point (details
+  play, home hero play, resume, and episode play). It mirrors the TV app: Server List 1 is
+  recommended for movies and TV, Server List 2 is shown but disabled for TV shows. The chosen
+  list is passed into the player as the starting source.
+
+Files affected:
+server/vidnest-extractor.cjs (rewritten); server/index.js (/api/extract Vidnest branch);
+native/mobile/.../ui/components/SourcePickerDialog.kt (new);
+native/mobile/.../ui/WatchAllMobileApp.kt; docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+Local extractor tests returned playable HLS streams in about 10-11 seconds for Jawan
+(TMDB 872906), Fight Club (550) and Game of Thrones S1E1 (1399), with 5-8 fallback candidates.
+The local proxy rewrote the master playlist, a 720p variant playlist and the first video
+segment correctly (HTTP 200, valid fMP4 data). npm run build succeeded, and Gradle
+:mobile:compileDebugKotlin and :mobile:assembleDebug succeeded offline with the APK rebuilt.
+No phone or emulator was available, so the new mobile dialog was not visually tested. The
+live Vercel deployment still runs the old server code until it is redeployed.

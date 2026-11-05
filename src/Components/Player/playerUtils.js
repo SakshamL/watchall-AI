@@ -116,10 +116,130 @@ export function proxyUrl(url, type = "", referer = "") {
 }
 
 export function streamUrlFor(type, url, { forceProxy = false, referer = "" } = {}) {
-  if (forceProxy || (import.meta.env.DEV && type !== "mp4")) {
+  // Progressive MP4 always goes through the proxy: it guarantees Range
+  // requests, correct cross-origin headers and a consistent seek experience.
+  if (forceProxy || type === "mp4" || (import.meta.env.DEV && type !== "mp4")) {
     return proxyUrl(url, type, referer);
   }
   return url;
+}
+
+let hevcSupport = null;
+
+// HEVC (H.265) gives the same picture at roughly half the bitrate. Browsers
+// expose support through MediaSource, so check once and cache the result.
+export function deviceSupportsHevc() {
+  if (hevcSupport !== null) return hevcSupport;
+  try {
+    const mediaSource =
+      typeof window !== "undefined"
+        ? window.MediaSource || window.ManagedMediaSource
+        : null;
+    const probe = (mime) =>
+      (mediaSource && typeof mediaSource.isTypeSupported === "function"
+        ? mediaSource.isTypeSupported(mime)
+        : false) ||
+      (typeof document !== "undefined" &&
+        !!document.createElement("video").canPlayType(mime));
+    hevcSupport =
+      probe('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+      probe('video/mp4; codecs="hvc1.1.6.L93.B0"');
+  } catch {
+    hevcSupport = false;
+  }
+  return hevcSupport;
+}
+
+export function codecKind(value) {
+  const text = String(value || "").toLowerCase();
+  if (/hev1|hvc1|hevc|h\.?265|x265/.test(text)) return "hevc";
+  if (/avc1|avc3|h\.?264|x264/.test(text)) return "h264";
+  if (/av01|av1/.test(text)) return "av1";
+  if (/vp0?9/.test(text)) return "vp9";
+  return "";
+}
+
+export function heightFromUrl(value) {
+  const text = String(value || "");
+  const match = text.match(/(?:^|[^\d])(2160|1440|1080|720|480|360|240)p(?:[^\d]|$)/i);
+  if (match) return Number(match[1]);
+  if (/\b(4k|uhd)\b/i.test(text)) return 2160;
+  if (/\bfhd\b/i.test(text)) return 1080;
+  if (/\bhd\b/i.test(text)) return 720;
+  return 0;
+}
+
+// Turns the server's `streamUrl` + `hls`/`dash`/`streams` block into one
+// ordered fallback chain. The proven stream is always first.
+export function buildStreamCandidates(data) {
+  if (!data) return [];
+  const list = [];
+  const push = (url, type, extra = {}) => {
+    if (!url) return;
+    if (list.some((item) => item.url === url)) return;
+    list.push({
+      url,
+      type: type || detectSourceType(url, type) || "hls",
+      quality: Number(extra.quality || extra.height || heightFromUrl(url)) || 0,
+      codec: extra.codec || codecKind(url),
+      verified: !!extra.verified,
+      label: extra.label || "",
+    });
+  };
+
+  push(data.streamUrl, data.type, { verified: true });
+  (Array.isArray(data.candidates) ? data.candidates : []).forEach((item) => {
+    if (item && typeof item === "object") {
+      push(item.url, item.type, item);
+    }
+  });
+  push(data.dash, "dash");
+  push(data.hls, "hls");
+  (Array.isArray(data.streams) ? data.streams : []).forEach((item) => {
+    if (typeof item === "string") push(item, "mp4");
+    else if (item && item.url) push(item.url, item.type || "mp4", item);
+  });
+  push(data.mp4, "mp4");
+  return list;
+}
+
+export function parseSubtitleText(text) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!source) return [];
+  const isSrt = /^\d+\s*\n\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(source);
+  const blocks = source.split(/\n{2,}/);
+  const toSeconds = (value) => {
+    const match = String(value)
+      .trim()
+      .match(/(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/);
+    if (!match) return 0;
+    return (
+      Number(match[1]) * 3600 +
+      Number(match[2]) * 60 +
+      Number(match[3]) +
+      Number(match[4].padEnd(3, "0")) / 1000
+    );
+  };
+  const cues = [];
+  blocks.forEach((block) => {
+    const lines = block.split("\n");
+    if (isSrt && /^\d+$/.test(lines[0].trim())) lines.shift();
+    const timingIndex = lines.findIndex((line) => line.includes("-->"));
+    if (timingIndex < 0) return;
+    const timing = lines[timingIndex];
+    const [startRaw, endRaw] = timing.split("-->");
+    const start = toSeconds(startRaw);
+    const end = toSeconds(endRaw);
+    if (!(end > start)) return;
+    const cueText = lines
+      .slice(timingIndex + 1)
+      .join("\n")
+      .replace(/<[^>]+>/g, "")
+      .trim();
+    if (!cueText) return;
+    cues.push({ start, end, text: cueText });
+  });
+  return cues;
 }
 
 export async function sniffSourceType(url) {
@@ -215,6 +335,10 @@ export function hlsConfigFor(profile) {
     maxBufferSize: (constrained ? 30 : 80) * 1000 * 1000,
     capLevelToPlayerSize: !profile.isTV,
     testBandwidth: true,
+    // Start on the lowest track and let ABR upgrade once real throughput is
+    // measured. This avoids a long stall when a fast connection is assumed.
+    startLevel: 0,
+    abrEwmaDefaultEstimate: constrained ? 700_000 : 1_000_000,
   };
 }
 

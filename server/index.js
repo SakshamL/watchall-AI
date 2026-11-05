@@ -123,8 +123,9 @@ function setCachedExtract(key, data) {
   extractCache.set(key, { data, t: Date.now() });
 }
 
-// Vidnest extraction is slow (roughly 15-25 seconds), so concurrent requests
-// for the same title share a single browser run instead of launching several.
+// Vidnest extraction takes several seconds (it queries every provider), so
+// concurrent requests for the same title share a single run instead of
+// hammering the provider API.
 const vidnestInflight = new Map();
 
 async function extractVidnestShared(key, task) {
@@ -184,6 +185,21 @@ const MAX_CACHE_ENTRY_BYTES = 20 * 1024 * 1024;
 const segmentCache = new Map();
 let segmentCacheBytes = 0;
 
+// DASH descriptors and init segments almost never change during playback, but
+// they are requested far more often than regular media segments. Keeping them
+// in their own small caches avoids evicting video segments while still letting
+// stale manifests expire quickly.
+const MANIFEST_CACHE_TTL = 5 * 60 * 1000;
+const MAX_MANIFEST_ENTRIES = 80;
+const manifestCache = new Map(); // key -> { value, contentType, storedAt }
+
+const INIT_CACHE_TTL = 30 * 60 * 1000;
+const MAX_INIT_ENTRIES = 90;
+const MAX_INIT_BYTES = 24 * 1024 * 1024;
+const MAX_INIT_ENTRY_BYTES = 8 * 1024 * 1024;
+const initCache = new Map();
+let initCacheBytes = 0;
+
 function cacheGet(url) {
   const entry = segmentCache.get(url);
   if (!entry) return null;
@@ -222,6 +238,70 @@ function cacheSet(url, buffer, contentType) {
 
 function cacheKeyFor(url, referer) {
   return referer ? `${url}|${referer}` : url;
+}
+
+function manifestCacheGet(key) {
+  const entry = manifestCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.storedAt > MANIFEST_CACHE_TTL) {
+    manifestCache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function manifestCacheSet(key, value, contentType) {
+  if (!value) return;
+  while (manifestCache.size >= MAX_MANIFEST_ENTRIES) {
+    const oldestKey = manifestCache.keys().next().value;
+    if (!oldestKey) break;
+    manifestCache.delete(oldestKey);
+  }
+  manifestCache.set(key, { value, contentType, storedAt: Date.now() });
+}
+
+// DASH init segments are tiny, immutable and requested before every quality
+// switch. Giving them a longer TTL and their own byte budget keeps quality
+// switching instant without growing the regular segment cache.
+function isInitSegment(url) {
+  const path = String(url || "")
+    .split(/[?#]/)[0]
+    .toLowerCase();
+  return /(?:^|[/_.-])init(?:[-_.]|$)/.test(path) ||
+    /init[-_.]?(?:stream|seg|track)/.test(path) ||
+    /[-_.]init\.(?:mp4|m4s|cmfv|cmfa)$/.test(path);
+}
+
+function initCacheGet(key) {
+  const entry = initCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.storedAt > INIT_CACHE_TTL) {
+    initCache.delete(key);
+    initCacheBytes -= entry.buffer.length;
+    return null;
+  }
+  return entry;
+}
+
+function initCacheSet(key, buffer, contentType) {
+  if (!buffer || !buffer.length || buffer.length > MAX_INIT_ENTRY_BYTES) return;
+  const existing = initCache.get(key);
+  if (existing) {
+    initCache.delete(key);
+    initCacheBytes -= existing.buffer.length;
+  }
+  while (
+    initCache.size >= MAX_INIT_ENTRIES ||
+    initCacheBytes + buffer.length > MAX_INIT_BYTES
+  ) {
+    const oldestKey = initCache.keys().next().value;
+    if (!oldestKey) break;
+    const oldest = initCache.get(oldestKey);
+    initCache.delete(oldestKey);
+    initCacheBytes -= oldest?.buffer.length || 0;
+  }
+  initCache.set(key, { buffer, contentType, storedAt: Date.now() });
+  initCacheBytes += buffer.length;
 }
 
 async function prefetch(url, referer) {
@@ -304,6 +384,28 @@ function classifyTarget(url, hint) {
   const path = url.pathname.toLowerCase();
   if (path.endsWith(".m3u8")) return "hls";
   if (path.endsWith(".mpd")) return "dash";
+  return "";
+}
+
+// Best-effort labels for progressive MP4 candidates. CDNs frequently encode the
+// resolution and codec in the filename or query string, which is enough for the
+// player to offer a useful "720p / 1080p" picker even when the server does not
+// return explicit metadata.
+function qualityFromUrl(value) {
+  const text = String(value || "");
+  const match = text.match(/(?:^|[^\d])(2160|1440|1080|720|480|360|240)p(?:[^\d]|$)/i);
+  if (match) return Number(match[1]);
+  if (/\b(4k|uhd)\b/i.test(text)) return 2160;
+  if (/\b(fhd)\b/i.test(text)) return 1080;
+  if (/\b(hd)\b/i.test(text)) return 720;
+  return 0;
+}
+
+function codecFromUrl(value) {
+  const text = String(value || "");
+  if (/hevc|h\.?265|x265/i.test(text)) return "hevc";
+  if (/h\.?264|avc|x264/i.test(text)) return "h264";
+  if (/av1/i.test(text)) return "av1";
   return "";
 }
 
@@ -501,28 +603,32 @@ app.get("/api/extract", async (req, res) => {
     if (!/^\d{1,10}$/.test(String(tmdb))) {
       return res.status(400).json({ error: "A numeric TMDB id is required." });
     }
-    const cacheKey = `vidnest:${type}:${tmdb}`;
+    const cacheKey = `vidnest:${type}:${tmdb}:${season || ""}:${episode || ""}`;
     const cached = getCachedExtract(cacheKey);
     if (cached) {
       console.log(`[vidnest] Cache hit: ${cacheKey}`);
       return res.json(cached);
     }
 
-    const pageUrl = `https://vidnest.fun/movie/${tmdb}`;
-    const embedUrl = `${requestOrigin(req)}/api/embed?src=${encodeURIComponent(pageUrl)}`;
-    console.log(`[vidnest] Extracting: ${pageUrl} (embed wrapper: ${embedUrl})`);
+    console.log(
+      `[vidnest] Extracting via provider API: tmdb=${tmdb} type=${type} s=${season || "-"} e=${episode || "-"}`
+    );
 
     try {
       const data = await extractVidnestShared(cacheKey, () =>
         extractVidnest({
           tmdb,
-          getBrowser,
-          embedUrl,
-          waitMs: VIDNEST_WAIT_MS,
+          type,
+          season,
+          episode,
+          lang: originalLang,
+          timeoutMs: VIDNEST_WAIT_MS,
         })
       );
       setCachedExtract(cacheKey, data);
-      console.log(`[vidnest] Result: type=${data.type} server=${data.server}`);
+      console.log(
+        `[vidnest] Result: type=${data.type} provider=${data.serverName || "?"} candidates=${data.candidates?.length || 0}`
+      );
       return res.json(data);
     } catch (error) {
       console.error(`[vidnest] Error: ${error.message}`);
@@ -788,8 +894,8 @@ app.get("/api/extract", async (req, res) => {
         // Once the forced server's envelope is 2xx, accept the stream the player
         // loads from it. MP4 gets a short grace period in case HLS appears too.
         if (forcedStatus && forcedStatus.status >= 200 && forcedStatus.status < 300) {
-          if (candidates.hls) { picked = candidates.hls; pickedKind = "hls"; break; }
           if (candidates.dash) { picked = candidates.dash; pickedKind = "dash"; break; }
+          if (candidates.hls) { picked = candidates.hls; pickedKind = "hls"; break; }
           if (candidates.mp4) {
             if (mp4SeenAt === null) mp4SeenAt = Date.now();
             else if (Date.now() - mp4SeenAt > 3000) {
@@ -845,23 +951,9 @@ app.get("/api/extract", async (req, res) => {
       while (Date.now() < deadline) {
         // A 2xx response observed inside Viduki's player beats any probe from
         // the function's own region, so accept it immediately.
-        const hls = candidates.hls;
-        if (hls && browserOk.has(hls.url)) {
-          picked = hls;
-          pickedKind = "hls";
-          console.log("[extract] HLS confirmed by the player — accepted without probe");
-          break;
-        }
-        if (hls && !badStreams.has(hls.url)) {
-          if (await probeStream(hls.url, "hls")) {
-            picked = hls;
-            pickedKind = "hls";
-            break;
-          }
-          badStreams.add(hls.url);
-          console.log(`[extract] Skipping unreachable HLS: ${hls.url.slice(0, 130)}`);
-        }
-
+        // Prefer DASH where the player actually received it: DASH gives us
+        // adaptive bitrate and smaller HEVC encodes. HLS stays as the immediate
+        // fallback because some Viduki servers only produce HLS.
         const dash = candidates.dash;
         if (dash && browserOk.has(dash.url)) {
           picked = dash;
@@ -877,6 +969,23 @@ app.get("/api/extract", async (req, res) => {
           }
           badStreams.add(dash.url);
           console.log(`[extract] Skipping unreachable DASH: ${dash.url.slice(0, 130)}`);
+        }
+
+        const hls = candidates.hls;
+        if (hls && browserOk.has(hls.url)) {
+          picked = hls;
+          pickedKind = "hls";
+          console.log("[extract] HLS confirmed by the player — accepted without probe");
+          break;
+        }
+        if (hls && !badStreams.has(hls.url)) {
+          if (await probeStream(hls.url, "hls")) {
+            picked = hls;
+            pickedKind = "hls";
+            break;
+          }
+          badStreams.add(hls.url);
+          console.log(`[extract] Skipping unreachable HLS: ${hls.url.slice(0, 130)}`);
         }
 
         const mp4 = candidates.mp4;
@@ -939,7 +1048,30 @@ app.get("/api/extract", async (req, res) => {
       return best ? best.name : null;
     })();
 
-    const result = { streamUrl: picked.url, type: streamType, server: activeServer, source: "viduki" };
+    const result = {
+      streamUrl: picked.url,
+      type: streamType,
+      server: activeServer,
+      source: "viduki",
+      // Every format the player actually loaded is returned separately so the
+      // client can fall back DASH -> HLS -> MP4 (or switch manually) without a
+      // second extraction round-trip.
+      hls: candidates.hls?.url || null,
+      dash: candidates.dash?.url || null,
+      mp4: candidates.mp4?.url || null,
+      streams: candidates.mp4
+        ? [
+            {
+              url: candidates.mp4.url,
+              type: "mp4",
+              quality: qualityFromUrl(candidates.mp4.url),
+              codec: codecFromUrl(candidates.mp4.url),
+            },
+          ]
+        : [],
+      candidates: buildCandidateList(picked, pickedKind, candidates, browserOk),
+      forceProxy: false,
+    };
     setCachedExtract(cacheKey, result);
     console.log(`[extract] Result: srv=${activeServer} type=${streamType}`);
     res.json(result);
@@ -957,6 +1089,34 @@ app.get("/api/extract", async (req, res) => {
     }
   }
 });
+
+/**
+ * Builds an ordered fallback list for the client. The stream the server just
+ * proved playable always comes first; other formats follow from richest to
+ * simplest (DASH -> HLS -> MP4). `verified` candidates were observed loading in
+ * the real player, which lets the client skip a pointless probe delay.
+ */
+function buildCandidateList(picked, pickedKind, candidates, browserOk) {
+  const list = [];
+  const push = (type, url, verified) => {
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    if (list.some((item) => item.url === url)) return;
+    list.push({
+      url,
+      type,
+      verified: !!verified,
+      quality: qualityFromUrl(url),
+      codec: codecFromUrl(url),
+    });
+  };
+
+  push(pickedKind, picked?.url, true);
+  ["dash", "hls", "mp4"].forEach((kind) => {
+    const candidate = candidates[kind];
+    if (candidate) push(kind, candidate.url, browserOk?.has(candidate.url));
+  });
+  return list;
+}
 
 /**
  * Summarises what the page actually loaded when no stream was detected.
@@ -1142,6 +1302,14 @@ async function handleProxy(req, res) {
     : {};
 
   if (kind) {
+    const manifestKey = `${kind}:${cacheKeyFor(targetUrl, referer)}`;
+    const cachedManifest = manifestCacheGet(manifestKey);
+    if (cachedManifest) {
+      res.setHeader("Content-Type", cachedManifest.contentType);
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(cachedManifest.value);
+    }
+
     const response = await axios({
       method: "GET",
       url: targetUrl,
@@ -1165,6 +1333,11 @@ async function handleProxy(req, res) {
         target,
         referer
       );
+      manifestCacheSet(
+        manifestKey,
+        rewritten,
+        "application/vnd.apple.mpegurl"
+      );
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       res.setHeader("Cache-Control", "no-store");
       res.send(rewritten);
@@ -1173,13 +1346,15 @@ async function handleProxy(req, res) {
     }
 
     const rewritten = rewriteDashManifest(String(response.data || ""), target);
+    manifestCacheSet(manifestKey, rewritten, "application/dash+xml");
     res.setHeader("Content-Type", "application/dash+xml");
     res.setHeader("Cache-Control", "no-store");
     return res.send(rewritten);
   }
 
   const cacheKey = cacheKeyFor(targetUrl, referer);
-  const cached = cacheGet(cacheKey);
+  const isInit = !req.headers.range && isInitSegment(targetUrl);
+  const cached = isInit ? initCacheGet(cacheKey) : cacheGet(cacheKey);
   if (cached) {
     return sendMedia(req, res, cached.buffer, cached.contentType);
   }
@@ -1192,6 +1367,61 @@ async function handleProxy(req, res) {
   if (req.headers.range) upstreamHeaders.Range = req.headers.range;
   if (req.headers["if-range"]) {
     upstreamHeaders["If-Range"] = req.headers["if-range"];
+  }
+
+  const isProgressive = /\.(mp4|m4v|webm)([?#]|$)/i.test(targetUrl);
+
+  // For progressive media (e.g. Netnaija MP4s) stream straight through with
+  // Range support instead of buffering the whole file. This keeps seeking
+  // responsive and avoids the 64MB buffering limit.
+  if (isProgressive || req.headers.range) {
+    const response = await axios({
+      method: "GET",
+      url: targetUrl,
+      responseType: "stream",
+      timeout: 35000,
+      headers: upstreamHeaders,
+      httpAgent,
+      httpsAgent,
+      validateStatus: () => true,
+      maxRedirects: 5,
+      decompress: false,
+    });
+
+    if (response.status >= 400) {
+      res.status(response.status);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      if (response.data && typeof response.data.destroy === "function") response.data.destroy();
+      return res.end(`Upstream media request failed (${response.status})`);
+    }
+
+    res.status(response.status);
+    res.setHeader(
+      "Content-Type",
+      response.headers["content-type"] || "application/octet-stream"
+    );
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Content-Length, Content-Range, Accept-Ranges"
+    );
+    if (response.headers["content-range"]) {
+      res.setHeader("Content-Range", response.headers["content-range"]);
+    }
+    if (response.headers["accept-ranges"]) {
+      res.setHeader("Accept-Ranges", response.headers["accept-ranges"]);
+    } else {
+      res.setHeader("Accept-Ranges", "bytes");
+    }
+    if (response.headers["content-length"]) {
+      res.setHeader("Content-Length", response.headers["content-length"]);
+    }
+    if (response.headers.etag) res.setHeader("ETag", response.headers.etag);
+    if (response.headers["last-modified"]) {
+      res.setHeader("Last-Modified", response.headers["last-modified"]);
+    }
+
+    return response.data.pipe(res);
   }
 
   const response = await axios({
@@ -1229,7 +1459,8 @@ async function handleProxy(req, res) {
   }
 
   if (!req.headers.range) {
-    cacheSet(cacheKey, buffer, contentType);
+    if (isInit) initCacheSet(cacheKey, buffer, contentType);
+    else cacheSet(cacheKey, buffer, contentType);
   }
 
   return sendMedia(req, res, buffer, contentType, {
@@ -1492,6 +1723,305 @@ function rewriteDashManifest(text, manifestUrl) {
   walk(root, manifestUrl);
   return serializeXml(root);
 }
+
+// ─── 3. NETNAIJA (MovieBox/Aoneroom) dynamic extractor ──────────────────────
+// Netnaija is a front-end for the MovieBox/Aoneroom backend. Unlike Viduki,
+// it exposes a plain JSON API, so no headless browser is needed: we ask the
+// detail endpoint for the subject id + season list, then the play endpoint for
+// the signed CDN URLs (MP4, and HLS when available).
+
+function netnaijaSlug(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const match =
+      url.pathname.match(/\/(?:movieDetail|videoPlayPage)\/([^/?#]+)/) ||
+      url.pathname.match(/\/([^/?#]+)$/);
+    if (match) return decodeURIComponent(match[1]);
+  } catch {}
+  return raw.split("?")[0].split("/").pop() || raw;
+}
+
+app.get("/api/netnaija/extract", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const slug = netnaijaSlug(req.query.detailPath || req.query.url || req.query.slug);
+  if (!slug) {
+    return res.status(400).json({ error: "Missing detailPath (or url/slug) query param." });
+  }
+
+  const detailUrl = `https://netnaija.film/wefeed-h5api-bff/detail?detailPath=${encodeURIComponent(slug)}`;
+  const playHeaders = {
+    Accept: "application/json",
+    Referer: `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
+    "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+  };
+
+  try {
+    const detailRes = await axios.get(detailUrl, {
+      headers: { ...playHeaders },
+      timeout: 20000,
+      validateStatus: (s) => s >= 200 && s < 300,
+    });
+    const detail = detailRes.data;
+    if (!detail || detail.code !== 0 || !detail.data?.subject) {
+      return res.status(502).json({ error: "Netnaija detail lookup failed.", detail });
+    }
+
+    const subject = detail.data.subject;
+    const resource = detail.data.resource || {};
+    const seasons = Array.isArray(resource.seasons) ? resource.seasons : [];
+    const subjectType = Number(subject.subjectType); // 1 = movie, 2 = series
+
+    let se;
+    let ep;
+    if (subjectType === 1) {
+      se = 0;
+      ep = 0;
+    } else {
+      const requestedSe =
+        typeof req.query.se === "string" ? Number(req.query.se) : null;
+      const requestedEp =
+        typeof req.query.ep === "string" ? Number(req.query.ep) : null;
+      se =
+        Number.isFinite(requestedSe) && requestedSe !== null
+          ? requestedSe
+          : seasons.length
+            ? Number(seasons[0].se)
+            : 1;
+      ep = Number.isFinite(requestedEp) && requestedEp !== null ? requestedEp : 1;
+    }
+
+    const playUrl =
+      `https://netnaija.film/wefeed-h5api-bff/subject/play` +
+      `?subjectId=${encodeURIComponent(subject.subjectId)}` +
+      `&se=${encodeURIComponent(se)}` +
+      `&ep=${encodeURIComponent(ep)}` +
+      `&detailPath=${encodeURIComponent(slug)}`;
+
+    const playRes = await axios.get(playUrl, {
+      headers: playHeaders,
+      timeout: 20000,
+      validateStatus: (s) => s >= 200 && s < 300,
+    });
+    const play = playRes.data;
+    if (!play || play.code !== 0 || !play.data) {
+      return res.status(502).json({ error: "Netnaija play lookup failed.", play });
+    }
+
+    const streams = (Array.isArray(play.data.streams) ? play.data.streams : [])
+      .filter((stream) => stream && typeof stream.url === "string")
+      .map((stream) => ({
+        ...stream,
+        quality:
+          Number(stream.resolutions) || qualityFromUrl(stream.url) || 0,
+        codec: codecFromUrl(stream.url),
+      }))
+      .sort((a, b) => b.quality - a.quality);
+    const hls = (Array.isArray(play.data.hls) ? play.data.hls : []).filter(
+      (item) => item && typeof item.url === "string"
+    );
+    const dash = (Array.isArray(play.data.dash) ? play.data.dash : []).filter(
+      (item) => item && typeof item.url === "string"
+    );
+
+    const bestStream = streams[0] || null;
+    const bestStreamUrl = bestStream
+      ? bestStream.url
+      : hls.length
+        ? hls[0].url
+        : dash.length
+          ? dash[0].url
+          : null;
+    const primaryType = bestStream
+      ? "mp4"
+      : hls.length
+        ? "hls"
+        : dash.length
+          ? "dash"
+          : null;
+
+    const candidates = [];
+    const pushCandidate = (type, url, extra = {}) => {
+      if (!url || candidates.some((item) => item.url === url)) return;
+      candidates.push({
+        url,
+        type,
+        quality: extra.quality || qualityFromUrl(url),
+        codec: extra.codec || codecFromUrl(url),
+        verified: true,
+      });
+    };
+    if (bestStreamUrl) pushCandidate(primaryType, bestStreamUrl, bestStream || {});
+    dash.forEach((item) => pushCandidate("dash", item.url));
+    hls.forEach((item) => pushCandidate("hls", item.url));
+    streams.forEach((item) => pushCandidate("mp4", item.url, item));
+
+    const captionsQuery = new URLSearchParams({
+      subjectId: String(subject.subjectId || ""),
+      se: String(se),
+      ep: String(ep),
+      detailPath: slug,
+    });
+    const captionsUrl = `/api/netnaija/captions?${captionsQuery.toString()}`;
+
+    return res.json({
+      source: "netnaija",
+      title: subject.title,
+      subjectId: subject.subjectId,
+      subjectType,
+      detailPath: slug,
+      season: se,
+      episode: ep,
+      seasons,
+      streams,
+      hls,
+      dash,
+      playConfig: play.data.playConfig || {},
+      captions: Array.isArray(play.data.captions) ? play.data.captions : [],
+      referer: `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
+      forceProxy: true,
+      // Convenience: best MP4 stream (highest resolution) if any.
+      streamUrl: bestStreamUrl,
+      type: primaryType,
+      candidates,
+      // Loaded after playback starts so caption discovery never delays video.
+      captionsUrl,
+    });
+  } catch (err) {
+    console.error("[netnaija] Error:", err.message);
+    return res.status(502).json({
+      error: "Netnaija extraction failed.",
+      details: err.message,
+    });
+  }
+});
+
+// ─── 3b. NETNAIJA CAPTIONS — fetched only after playback has started ──────────
+// Caption discovery must never delay the first frame, so the player requests
+// this endpoint once the video is playing (or from the subtitles menu).
+
+function normalizeCaptions(payload) {
+  const seen = new Set();
+  const list = [];
+
+  const pushTrack = (track) => {
+    if (!track) return;
+    const url =
+      track.url ||
+      track.src ||
+      track.subtitleUrl ||
+      track.captionUrl ||
+      track.fileUrl ||
+      track.path ||
+      "";
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const language =
+      track.language || track.lang || track.languageCode || track.locale || "";
+    const label =
+      track.label ||
+      track.name ||
+      track.title ||
+      (language ? String(language).toUpperCase() : `Subtitles ${list.length + 1}`);
+    list.push({
+      url,
+      language: String(language || ""),
+      label: String(label),
+      format: /\.srt(?:[?#]|$)/i.test(url) ? "srt" : "vtt",
+    });
+  };
+
+  const visit = (value, depth = 0) => {
+    if (!value || depth > 4) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    if (typeof value !== "object") return;
+    if (
+      value.url ||
+      value.src ||
+      value.subtitleUrl ||
+      value.captionUrl ||
+      value.fileUrl
+    ) {
+      pushTrack(value);
+    }
+    [
+      "captions",
+      "subtitles",
+      "subtitleList",
+      "captionList",
+      "tracks",
+      "list",
+      "items",
+      "streams",
+      "data",
+      "result",
+    ].forEach((key) => visit(value[key], depth + 1));
+  };
+
+  visit(payload);
+  return list;
+}
+
+app.get("/api/netnaija/captions", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const subjectId = String(req.query.subjectId || "").trim();
+  const slug = netnaijaSlug(req.query.detailPath || req.query.slug || "");
+  if (!subjectId && !slug) {
+    return res.status(400).json({
+      error: "Missing subjectId (or detailPath/slug) query param.",
+    });
+  }
+
+  const se = String(req.query.se || "0");
+  const ep = String(req.query.ep || "0");
+  const headers = {
+    Accept: "application/json",
+    Referer: slug
+      ? `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`
+      : "https://netnaija.film/",
+    "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+  };
+
+  const endpoints = [
+    "https://netnaija.film/wefeed-h5api-bff/subject/stream-captions",
+    "https://netnaija.film/wefeed-h5api-bff/subject/captions",
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        headers,
+        params: {
+          subjectId,
+          se,
+          ep,
+          detailPath: slug,
+        },
+        timeout: 12000,
+        validateStatus: (status) => status >= 200 && status < 300,
+      });
+      const data = response.data;
+      const captions = normalizeCaptions(data);
+      if (captions.length || data?.code === 0) {
+        return res.json({ captions, raw: data });
+      }
+    } catch (error) {
+      // Try the next known endpoint; a 404 here simply means this title has no
+      // external caption tracks.
+      void error;
+    }
+  }
+
+  return res.json({ captions: [] });
+});
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

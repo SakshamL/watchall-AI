@@ -2,10 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import WatchPlayer from "../Components/Player/WatchPlayer";
 import {
+  buildStreamCandidates,
   readStore,
   resumeKey,
   serverDisplayName,
 } from "../Components/Player/playerUtils";
+import {
+  consumePrefetchedStream,
+  prefetchKey,
+} from "../Services/streamPrefetch";
 import { movieAPI } from "../Services/api";
 
 const imageUrl = (path, size) =>
@@ -38,6 +43,19 @@ const buildMetadata = (details) => {
 
 const extractionMessage = (data, fallback) =>
   (data && typeof data.error === "string" && data.error) || fallback;
+
+const sourceForData = (data, { sourceId, server = null, forceProxy = false }) => ({
+  streamUrl: data.streamUrl,
+  type: data.type,
+  server: data.server || server || null,
+  referer: data.referer || "",
+  forceProxy: !!data.forceProxy || forceProxy || sourceId === "vidnest",
+  candidates: buildStreamCandidates(data),
+  streams: Array.isArray(data.streams) ? data.streams : [],
+  captions: Array.isArray(data.captions) ? data.captions : [],
+  captionsUrl: data.captionsUrl || "",
+  preferDash: data.type === "dash",
+});
 
 const VideoPlayer = () => {
   const { id } = useParams();
@@ -155,36 +173,43 @@ const VideoPlayer = () => {
         : "";
 
       try {
-        const response = await fetch(
-          `/api/extract?tmdb=${encodeURIComponent(id)}&type=movie&source=${sourceId}${serverParam}${langParam}`,
-          { signal: controller.signal }
-        );
-        let data = null;
-        try {
-          data = await response.json();
-        } catch {
-          data = null;
-        }
-        if (cancelled) return;
-        if (!response.ok || !data?.streamUrl) {
-          throw new Error(
-            extractionMessage(
-              data,
-              sourceId === "vidnest"
-                ? "Server List 2 could not find a playable stream. Try Server List 1 or choose another server."
-                : "Server List 1 could not find a playable stream. Try Server List 2, try again, or choose a specific server."
-            )
+        const prefetched = pendingServer
+          ? null
+          : consumePrefetchedStream(
+              prefetchKey({
+                mediaId: id,
+                mediaType: "movie",
+                source: sourceId,
+                language: lang,
+              })
+            );
+
+        let data = prefetched;
+        if (!data) {
+          const response = await fetch(
+            `/api/extract?tmdb=${encodeURIComponent(id)}&type=movie&source=${sourceId}${serverParam}${langParam}`,
+            { signal: controller.signal }
           );
+          try {
+            data = await response.json();
+          } catch {
+            data = null;
+          }
+          if (cancelled) return;
+          if (!response.ok || !data?.streamUrl) {
+            throw new Error(
+              extractionMessage(
+                data,
+                sourceId === "vidnest"
+                  ? "Server List 2 could not find a playable stream. Try Server List 1 or choose another server."
+                  : "Server List 1 could not find a playable stream. Try Server List 2, try again, or choose a specific server."
+              )
+            );
+          }
         }
 
         clearSourceFailed(sourceId);
-        setSource({
-          streamUrl: data.streamUrl,
-          type: data.type,
-          server: data.server || null,
-          referer: data.referer || "",
-          forceProxy: !!data.forceProxy || sourceId === "vidnest",
-        });
+        setSource(sourceForData(data, { sourceId }));
         setActiveServer(
           data.server || (sourceId === "vidnest" ? "Vidnest" : null)
         );
@@ -323,13 +348,12 @@ const VideoPlayer = () => {
         }
 
         clearSourceFailed(sourceId);
-        setSource({
-          streamUrl: data.streamUrl,
-          type: data.type,
-          server: data.server || name,
-          referer: data.referer || "",
-          forceProxy: !!data.forceProxy,
-        });
+        setSource(
+          sourceForData(data, {
+            sourceId: "viduki",
+            server: name,
+          })
+        );
         setActiveServer(data.server || name);
         setSourceError(null);
         setSourceLoading(false);
