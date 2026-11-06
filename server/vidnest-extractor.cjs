@@ -54,6 +54,22 @@ const PROVIDER_TIMEOUT_MS = 9000;
 const PROBE_TIMEOUT_MS = 8000;
 
 /**
+ * VidNest's provider API (new.vidnest.fun) sits behind a Cloudflare rule that
+ * rejects requests from datacenter networks — including Vercel's serverless
+ * egress, which answers 403 immediately. The site's own player relays API calls
+ * through one of these endpoints, which we use only when the direct call fails,
+ * so local development still talks to the API directly.
+ */
+const RELAY_BASES = [
+  "https://megacloud.animanga.fun/ts-proxy",
+  "https://upcloud.animanga.fun/ts-proxy",
+];
+
+// On Vercel the direct API always answers 403, so do not spend the full
+// provider timeout on it before falling back to the relay.
+const ON_VERCEL = Boolean(process.env.VERCEL);
+
+/**
  * VidNest's own front end rewrites relative provider paths (Alfa does this)
  * through one of these Cloudflare workers, so we mirror that behaviour.
  */
@@ -285,6 +301,34 @@ function collectStreams(payload, provider) {
   return Array.from(seen.values());
 }
 
+const PROVIDER_HEADERS = {
+  "User-Agent": UA,
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: `${SITE_BASE}/`,
+  Origin: SITE_BASE,
+};
+
+async function readJson(response) {
+  let text;
+  try {
+    text = (await response.text()).slice(0, 2_000_000);
+  } catch {
+    return null;
+  }
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch one provider. Direct first; if the direct call is blocked (Vercel gets
+ * an instant Cloudflare 403) or answers with something that is not JSON, retry
+ * through the relay hosts the VidNest site itself uses.
+ */
 async function fetchProvider(provider, options) {
   const { tmdb, type, season, episode, timeoutMs } = options;
   const path =
@@ -293,29 +337,37 @@ async function fetchProvider(provider, options) {
       : `${provider.movie}/${encodeURIComponent(tmdb)}`;
   const url = `${API_BASE}${path}?_n=${encodeURIComponent(makeNonce())}`;
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": UA,
-      Accept: "application/json, text/plain, */*",
-      "Accept-Language": "en-US,en;q=0.9",
-      Referer: `${SITE_BASE}/`,
-      Origin: SITE_BASE,
-      "X-Stream-Nonce": makeNonce(),
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  if (!response.ok) return [];
-  const text = (await response.text()).slice(0, 2_000_000);
-  if (!text.trim()) return [];
-
-  let parsed;
+  let parsed = null;
   try {
-    parsed = JSON.parse(text);
+    const response = await fetch(url, {
+      headers: { ...PROVIDER_HEADERS, "X-Stream-Nonce": makeNonce() },
+      redirect: "follow",
+      signal: AbortSignal.timeout(ON_VERCEL ? 3000 : timeoutMs),
+    });
+    if (response.ok) parsed = await readJson(response);
   } catch {
-    return [];
+    parsed = null;
   }
+
+  if (!parsed) {
+    for (const relay of RELAY_BASES) {
+      try {
+        const relayUrl = `${relay}?url=${encodeURIComponent(url)}`;
+        const response = await fetch(relayUrl, {
+          headers: { "User-Agent": UA, Accept: "application/json, text/plain, */*" },
+          redirect: "follow",
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) continue;
+        parsed = await readJson(response);
+        if (parsed) break;
+      } catch {
+        // Try the next relay.
+      }
+    }
+  }
+
+  if (!parsed) return [];
 
   let payload;
   try {
