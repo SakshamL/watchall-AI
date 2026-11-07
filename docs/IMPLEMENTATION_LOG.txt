@@ -1039,3 +1039,27 @@ native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
 
 How it was verified:
 - :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
+---
+
+Date: Sat Nov 07 2026
+Area: TV theme, focus, scroll, Browse
+
+Issue/Feature:
+User requested navy-magenta theme, white thin focus border, brighter focus, scroll-to-top on first banner/Play, card titles in viewport, less Browse header space, auto-load earlier.
+
+What was changed and how it works now:
+- Color palette changed from cyan to navy-magenta mix (TvColors.Cyan/Teal/Violet).
+- Focus border is now white, 2 dp, with brighter container on focus.
+- Home hero Play button and Details Play button scroll their lists to top on focus.
+- TvPosterCard focusable now wraps poster+title so titles stay in viewport.
+- Browse header/filter row compacted; auto-load threshold set to 12 items before end.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/theme/TvTheme.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+
+How it was verified:
+- :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
