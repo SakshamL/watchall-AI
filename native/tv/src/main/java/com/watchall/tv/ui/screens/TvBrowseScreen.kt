@@ -109,7 +109,7 @@ fun TvBrowseScreen(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
 
         LazyRow(
             modifier = Modifier.fillMaxWidth(),

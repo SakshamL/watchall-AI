@@ -217,7 +217,7 @@ fun TvFocusable(
                 },
             )
             .border(
-                width = if (focused) 2.dp else 1.dp,
+                width = if (focused) 3.dp else 1.dp,
                 color = if (focused) focusBorderColor else borderColor,
                 shape = shape,
             )
@@ -263,23 +263,29 @@ fun TvPosterCard(
     bringIntoViewOnFocus: Boolean = false,
 ) {
     val columnModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
-    Column(modifier = columnModifier) {
-        TvFocusable(
-            onClick = onClick,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f),
-            shape = RoundedCornerShape(10.dp),
-            focusRequester = focusRequester,
-            scaleOnFocus = 1.05f,
-            onFocusChange = onFocusChange,
-            leftFocusRequester = leftFocusRequester,
-            rightFocusRequester = rightFocusRequester,
-            upFocusRequester = upFocusRequester,
-            downFocusRequester = downFocusRequester,
-            bringIntoViewOnFocus = bringIntoViewOnFocus,
-        ) {
-            Box(Modifier.fillMaxSize()) {
+    TvFocusable(
+        onClick = onClick,
+        modifier = columnModifier,
+        shape = RoundedCornerShape(10.dp),
+        focusRequester = focusRequester,
+        scaleOnFocus = 1.05f,
+        onFocusChange = onFocusChange,
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        bringIntoViewOnFocus = bringIntoViewOnFocus,
+        containerColor = Color.Transparent,
+        focusedContainerColor = Color.Transparent,
+        borderColor = Color.Transparent,
+        focusBorderColor = TvColors.Cyan,
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f),
+            ) {
                 TvRemoteImage(
                     path = media.posterPath,
                     contentDescription = media.displayTitle,

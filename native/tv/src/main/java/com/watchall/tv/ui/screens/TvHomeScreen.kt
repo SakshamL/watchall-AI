@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -75,6 +76,7 @@ fun TvHomeScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val contentFocus = LocalTvContentFocusRequester.current
     val fallbackFocus = remember { FocusRequester() }
+    val listState = rememberLazyListState()
     // The Play button is the first focus target on Home, so it also serves as
     // the destination for Down from the top navigation bar.
     val heroPlayFocus = contentFocus ?: fallbackFocus
