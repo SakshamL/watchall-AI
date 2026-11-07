@@ -1126,22 +1126,31 @@ fun TvPosterRow(
     onOpen: (MediaSummary) -> Unit,
     modifier: Modifier = Modifier,
     ranked: Boolean = false,
+    landscape: Boolean = false,
     firstFocusRequester: FocusRequester? = null,
 ) {
     if (items.isEmpty()) return
     LazyRow(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(TvSizes.PosterGap),
+        horizontalArrangement = Arrangement.spacedBy(if (landscape) 14.dp else TvSizes.PosterGap),
     ) {
         itemsIndexed(items, key = { _, media -> media.key }) { index, media ->
-            TvPosterCard(
-                media = media,
-                onClick = { onOpen(media) },
-                width = TvSizes.PosterWidth,
-                rank = if (ranked && index < 10) index + 1 else null,
-                focusRequester = if (index == 0) firstFocusRequester else null,
-            )
+            if (landscape) {
+                TvLandscapeCard(
+                    media = media,
+                    onClick = { onOpen(media) },
+                    focusRequester = if (index == 0) firstFocusRequester else null,
+                )
+            } else {
+                TvPosterCard(
+                    media = media,
+                    onClick = { onOpen(media) },
+                    width = TvSizes.PosterWidth,
+                    rank = if (ranked && index < 10) index + 1 else null,
+                    focusRequester = if (index == 0) firstFocusRequester else null,
+                )
+            }
         }
     }
 }
@@ -1321,5 +1330,82 @@ fun TvPosterGrid(
                 footer()
             }
         }
+    }
+}
+
+@Composable
+fun TvLandscapeCard(
+    media: MediaSummary,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    width: Dp = 260.dp,
+    focusRequester: FocusRequester? = null,
+    onFocusChange: ((Boolean) -> Unit)? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Column(modifier = modifier.width(width)) {
+        TvFocusable(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f),
+            shape = RoundedCornerShape(10.dp),
+            focusRequester = focusRequester,
+            scaleOnFocus = 1.04f,
+            onFocusChange = { focused = it; onFocusChange?.invoke(it) },
+            containerColor = TvColors.Card,
+            focusedContainerColor = TvColors.CardHigh,
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                TvRemoteImage(
+                    path = media.backdropPath ?: media.posterPath,
+                    contentDescription = media.displayTitle,
+                    size = "w780",
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                            ),
+                        ),
+                )
+                if (media.rating > 0) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.62f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Star, contentDescription = null, tint = TvColors.Amber, modifier = Modifier.size(9.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(text = Formatters.rating(media.rating), style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp), color = TvColors.Amber)
+                    }
+                }
+                Text(
+                    text = media.displayTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" · "),
+            style = MaterialTheme.typography.labelSmall,
+            color = TvColors.TextMuted,
+            maxLines = 1,
+        )
     }
 }
