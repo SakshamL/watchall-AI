@@ -1304,12 +1304,13 @@ fun TvPosterGrid(
     firstFocusRequester: FocusRequester? = null,
     firstItemUpFocusRequester: FocusRequester? = null,
     minColumnWidth: Dp = 118.dp,
+    landscape: Boolean = false,
     state: LazyGridState = rememberLazyGridState(),
     contentPadding: PaddingValues = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
     footer: (@Composable () -> Unit)? = null,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = minColumnWidth),
+        columns = GridCells.Adaptive(minSize = if (landscape) 240.dp else minColumnWidth),
         modifier = modifier.fillMaxWidth(),
         state = state,
         contentPadding = contentPadding,
@@ -1317,13 +1318,21 @@ fun TvPosterGrid(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         itemsIndexed(items, key = { _, media -> media.key }) { index, media ->
-            TvPosterCard(
-                media = media,
-                onClick = { onOpen(media) },
-                width = null,
-                focusRequester = if (index == 0) firstFocusRequester else null,
-                upFocusRequester = if (index == 0) firstItemUpFocusRequester else null,
-            )
+            if (landscape) {
+                TvLandscapeCard(
+                    media = media,
+                    onClick = { onOpen(media) },
+                    focusRequester = if (index == 0) firstFocusRequester else null,
+                )
+            } else {
+                TvPosterCard(
+                    media = media,
+                    onClick = { onOpen(media) },
+                    width = null,
+                    focusRequester = if (index == 0) firstFocusRequester else null,
+                    upFocusRequester = if (index == 0) firstItemUpFocusRequester else null,
+                )
+            }
         }
         if (footer != null) {
             item(span = { GridItemSpan(maxLineSpan) }) {

@@ -256,6 +256,7 @@ fun TvBrowseScreen(
                 state = gridState,
                 firstFocusRequester = firstPosterFocus,
                 firstItemUpFocusRequester = contentFocus,
+                landscape = true,
                 contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 26.dp),
                 minColumnWidth = 96.dp,
             )
