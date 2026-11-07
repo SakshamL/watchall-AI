@@ -723,3 +723,184 @@ segment correctly (HTTP 200, valid fMP4 data). npm run build succeeded, and Grad
 :mobile:compileDebugKotlin and :mobile:assembleDebug succeeded offline with the APK rebuilt.
 No phone or emulator was available, so the new mobile dialog was not visually tested. The
 live Vercel deployment still runs the old server code until it is redeployed.
+
+Date: Fri Nov 06 2026
+Area: Standalone stream extractor (VegaMovies)
+Issue/Feature:
+Added VegaMovies (vegamovies4.co.in) support to the standalone extractor. The site embeds a streaming player via an iframe (slast430did.com) that loads an HLS stream. The extractor uses Puppeteer to open the page, intercept the .m3u8 request, and return the stream URL.
+
+What was changed and how it works now:
+- Added extractVegamovies() function using Puppeteer browser-based extraction (same pattern as Viduki).
+- extractStream() now detects vegamovies4.co.in URLs and routes them to extractVegamovies().
+- forceProxy is auto-enabled so the stream plays through the local proxy for smooth seeking.
+- Added "VegaMovies" checkbox to the UI.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- Node syntax check passed.
+- Tested with a VegaMovies URL; returned an HLS stream URL (m3u8) with forceProxy enabled.
+
+Date: Fri Nov 06 2026
+Area: Standalone stream extractor (VegaMovies dynamic)
+Issue/Feature:
+Made VegaMovies extraction dynamic from TMDB ID. The extractor now resolves the TMDB title, searches VegaMovies via its form (POST), scrapes the results page for the matching movie link, and then extracts the HLS stream.
+
+What was changed and how it works now:
+- Added resolveVegamoviesFromTmdb() which fetches TMDB title, searches VegaMovies (form submit via JS), and matches the result by title.
+- The VegaMovies checkbox now supports TMDB ID-based extraction.
+- Stream extraction uses Puppeteer to intercept the .m3u8 HLS request from the embedded player.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- Tested with TMDB ID 1375156 (Udta Teer); resolved to correct VegaMovies page and extracted HLS stream successfully.
+
+Date: Fri Nov 06 2026
+Area: Standalone stream extractor (VegaMovies performance)
+Issue/Feature:
+Optimized VegaMovies extraction by combining TMDB resolution and stream extraction into a single browser session, reducing total time from ~25s to ~10-12s.
+
+What was changed and how it works now:
+- Added extractVegamoviesFromTmdb() which does search + stream extraction in one browser session.
+- Reduced wait times: search wait 8s->3s, stream grace 2s->500ms, polling 500ms->250ms.
+- No separate browser launch for resolve and extract.
+
+Files affected:
+standalone-stream-extractor.cjs
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- Tested with TMDB ID 1375156; resolved and extracted HLS stream successfully.
+
+Date: Fri Nov 06 2026
+Area: Native apps (VegaMovies Server List 3)
+Issue/Feature:
+Added VegaMovies as "Server List 3" across the native mobile and TV apps, matching the web app integration. The server endpoint now handles source=vegamovies.
+
+What was changed and how it works now:
+- Added SERVER_THREE("vegamovies", "Server List 3", "VegaMovies", true) to SourceList enum.
+- Updated fromApi() to recognize "vegamovies".
+- Updated UiText.kt for source name and sanitization.
+- Updated PlayerViewModel.kt loading messages and active server name.
+- Updated mobile and TV PlayerScreen source sheet subtitles.
+- Updated mobile and TV SourcePickerDialog subtitles.
+- Updated TV loading text for Server List 3.
+- Server: added source=vegamovies branch in /api/extract using extractVegamoviesServer().
+- Web: added VegaMovies to sourceServers, switchServer, loading messages, and forceProxy.
+- playerUtils.js: serverDisplayName now handles "VegaMovies".
+
+Files affected:
+server/index.js
+src/Pages/VideoPlayer.jsx
+src/Components/Player/playerUtils.js
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/util/UiText.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/SourcePickerDialog.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvSourcePickerDialog.kt
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- Server syntax check passed (node --check).
+- Native code reviewed for consistency.
+
+Date: Sat Nov 07 2026
+Area: Native builds (mobile + TV)
+Issue/Feature:
+The mobile and TV APK files still had the old Nov 5 build timestamp, so the VegaMovies "Server List 3" changes were not present in the installable apps.
+
+What was changed and how it works now:
+- Rebuilt both debug APKs from the updated source using Gradle (JAVA_HOME pointed at Android Studio's bundled JDK).
+- Both builds completed successfully. New APKs now include Server List 3 (VegaMovies).
+
+Files affected:
+native/mobile/build/outputs/apk/debug/mobile-debug.apk
+native/tv/build/outputs/apk/debug/tv-debug.apk
+
+How it was verified:
+- Gradle reported BUILD SUCCESSFUL for :mobile:assembleDebug and :tv:assembleDebug.
+- APK timestamps are now 11/7/2026 12:59 PM (previously 11/5/2026).
+- No device was connected over ADB, so installation on hardware was not performed.
+
+Date: Sat Nov 07 2026
+Area: Server List 2 (VidNest) on the deployed server
+Issue/Feature:
+Server List 2 failed instantly in the deployed app even though it worked on a local machine. The VidNest provider API answers 403 to Vercel's datacenter network, but the same call succeeds from a home connection.
+
+What was changed and how it works now:
+- The extractor now tries the provider directly first (so local development is unchanged).
+- If that call is blocked or returns something that is not valid JSON, it retries through the relay hosts the VidNest player itself uses (megacloud/upcloud).
+- On Vercel the direct attempt is capped at 3 seconds so the request does not waste the full timeout before falling back.
+- A successful movie extraction now returns a playable HLS stream, and the media master playlist loads through the WatchAll proxy.
+
+Files affected:
+server/vidnest-extractor.cjs
+
+How it was verified:
+- Live request: /api/extract?tmdb=872906&type=movie&source=vidnest&lang=hi returned HTTP 200 with 5 candidates.
+- The returned stream's master playlist loaded through /api/proxy with HTTP 200.
+- Local extraction still returned a stream through the direct route.
+
+Date: Sat Nov 07 2026
+Area: Library (mobile and TV) - Watched history
+Issue/Feature:
+There was no record of titles the viewer had finished. Added a persistent "Watched" section that accumulates completed movies and TV shows and lets the viewer remove individual titles.
+
+What was changed and how it works now:
+- Added a WatchedEntry model. Movies are stored once per title. TV shows are stored once per show with the set of completed episodes and the latest episode label, so replaying an episode does not create duplicates.
+- Playback marks a title as watched when it reaches 90% of its duration. At that point it is added to Watched and removed from Continue watching.
+- Mobile Library now shows a "Watched" row with poster cards, an X button on each card, and reads the list again after a removal.
+- TV Library now shows a "Watched" row. Pressing OK opens the title; holding OK removes it. The section header and the focused card both show the "hold OK to remove" hint.
+- Watched entries are kept on the device, are capped at 200 titles, and the newest entry appears first.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/prefs/PreferencesStore.kt
+native/core/src/main/java/com/watchall/core/repo/WatchAllRepository.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/Common.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/LibraryScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
+
+How it was verified:
+- :mobile:compileDebugKotlin and :tv:compileDebugKotlin completed successfully offline.
+- Both debug APKs rebuilt successfully.
+- No phone, TV, or emulator was available, so the visual behaviour and long-press were not exercised on hardware.
+
+Date: Sat Nov 07 2026
+Area: TV app navigation and layout
+Issue/Feature:
+Several TV-only problems were reported: the app did not default to the Vercel server, Down from the top bar went nowhere, the search keyboard opened as soon as the field was focused, browse posters were clipped at the top edges, and the details screen scrolled down and trapped focus on the back button.
+
+What was changed and how it works now:
+- The compiled default server is https://watchall-media.vercel.app. A one-time migration also replaces the old canned LAN/emulator addresses (192.168.1.4:3001 and the localhost/10.0.2.2 equivalents) with the WatchAll server, so an upgraded install does not keep pointing at an old development machine.
+- The top navigation now uses explicit focus links for the Down direction, and Home's Play button is the same focus target the navigation sends focus to. Down now enters the page on Home, Browse, Search, Library, and Settings. Settings lands on Save & test rather than the text field.
+- Search no longer focuses a text field by default. It shows a focusable search bar; pressing OK switches it into an editable field and opens the keyboard. Back or Search closes editing and hides the keyboard.
+- Poster grids get a small inner padding so the focus scale is not clipped at the top or side edges of the grid.
+- The details screen keeps the page at the top when it opens while focus stays on Play. The back button is explicitly linked to Play for Down and Right, and Play links back up to the back button, so focus can no longer get stuck at the top-left.
+- The Play button's focus request no longer scrolls the details page.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/prefs/PreferencesStore.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSearchScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSettingsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPersonScreen.kt
+
+How it was verified:
+- :mobile:compileDebugKotlin and :tv:compileDebugKotlin completed successfully offline.
+- The generated core BuildConfig contains DEFAULT_API_BASE_URL = https://watchall-media.vercel.app.
+- Both debug APKs rebuilt successfully.
+- No TV or emulator was available, so remote-control behaviour was not exercised on hardware.

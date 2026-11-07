@@ -20,11 +20,16 @@ enum class SourceList(
     val supportsTv: Boolean,
 ) {
     SERVER_ONE("viduki", "Server List 1", "Recommended", true),
-    SERVER_TWO("vidnest", "Server List 2", "Alternative", false);
+    SERVER_TWO("vidnest", "Server List 2", "Alternative", false),
+    SERVER_THREE("vegamovies", "Server List 3", "VegaMovies", true);
 
     companion object {
         fun fromApi(value: String?): SourceList =
-            if (value == SERVER_TWO.apiId) SERVER_TWO else SERVER_ONE
+            when (value) {
+                SERVER_TWO.apiId -> SERVER_TWO
+                SERVER_THREE.apiId -> SERVER_THREE
+                else -> SERVER_ONE
+            }
 
         fun available(mediaType: MediaType): List<SourceList> =
             entries.filter { it.supportsTv || mediaType == MediaType.MOVIE }
@@ -233,6 +238,49 @@ data class WatchlistItem(
     val media: MediaSummary,
     val addedAt: Long = System.currentTimeMillis(),
 )
+
+/**
+ * A title the viewer finished (or watched almost to the end). Movies are kept
+ * as a single entry; TV shows keep the episodes that were completed so the
+ * count stays accurate when the same episode is replayed.
+ */
+data class WatchedEntry(
+    val mediaKey: String,
+    val mediaId: Int,
+    val mediaType: MediaType,
+    val title: String,
+    val posterPath: String? = null,
+    val backdropPath: String? = null,
+    val originalLanguage: String = "",
+    val year: String = "",
+    val lastEpisodeLabel: String? = null,
+    val episodes: List<String> = emptyList(),
+    val watchedAt: Long = System.currentTimeMillis(),
+) {
+    val displayTitle: String get() = title.ifBlank { "Untitled" }
+
+    val episodeCount: Int get() = episodes.size
+
+    val subtitle: String
+        get() = when (mediaType) {
+            MediaType.MOVIE -> "Movie · Watched"
+            MediaType.TV -> buildString {
+                append(lastEpisodeLabel?.takeIf { it.isNotBlank() } ?: "TV Show")
+                if (episodeCount > 1) append(" · $episodeCount episodes")
+                append(" · Watched")
+            }
+        }
+
+    fun toSummary(): MediaSummary = MediaSummary(
+        id = mediaId,
+        title = title,
+        posterPath = posterPath,
+        backdropPath = backdropPath,
+        year = year,
+        mediaType = mediaType,
+        originalLanguage = originalLanguage,
+    )
+}
 
 data class AppSettings(
     val apiBaseUrl: String,

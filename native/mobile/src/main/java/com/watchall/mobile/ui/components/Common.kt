@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,6 +68,7 @@ import com.watchall.core.data.ImageUrls
 import com.watchall.core.data.MediaSummary
 import com.watchall.core.data.MediaType
 import com.watchall.core.data.ResumeEntry
+import com.watchall.core.data.WatchedEntry
 import com.watchall.mobile.ui.theme.WatchColors
 
 @Composable
@@ -436,6 +438,94 @@ fun ContinueWatchingCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
+            Text(
+                text = entry.subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = WatchColors.TextMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+fun WatchedCard(
+    entry: WatchedEntry,
+    onClick: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = Modifier
+            .width(152.dp)
+            .clip(RoundedCornerShape(17.dp))
+            .background(WatchColors.Card)
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f),
+        ) {
+            RemoteImage(
+                path = entry.posterPath ?: entry.backdropPath,
+                contentDescription = entry.displayTitle,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                        ),
+                    ),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(WatchColors.Cyan.copy(alpha = 0.92f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = "Watched",
+                    tint = Color.Black,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            if (onRemove != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(7.dp)
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .clickable(onClick = onRemove),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Remove ${entry.displayTitle} from Watched",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
+            Text(
+                text = entry.displayTitle,
+                style = MaterialTheme.typography.titleSmall,
+                color = WatchColors.Text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(3.dp))
             Text(
                 text = entry.subtitle,
                 style = MaterialTheme.typography.labelSmall,

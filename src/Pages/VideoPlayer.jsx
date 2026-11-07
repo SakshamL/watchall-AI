@@ -49,7 +49,7 @@ const sourceForData = (data, { sourceId, server = null, forceProxy = false }) =>
   type: data.type,
   server: data.server || server || null,
   referer: data.referer || "",
-  forceProxy: !!data.forceProxy || forceProxy || sourceId === "vidnest",
+  forceProxy: !!data.forceProxy || forceProxy || sourceId === "vidnest" || sourceId === "vegamovies",
   candidates: buildStreamCandidates(data),
   streams: Array.isArray(data.streams) ? data.streams : [],
   captions: Array.isArray(data.captions) ? data.captions : [],
@@ -65,7 +65,9 @@ const VideoPlayer = () => {
   const urlSource =
     urlSourceValue === "vidnest" || urlSourceValue === "2"
       ? "vidnest"
-      : "viduki";
+      : urlSourceValue === "vegamovies" || urlSourceValue === "3"
+        ? "vegamovies"
+        : "viduki";
   const [sourceId, setSourceId] = useState(urlSource);
   const [metadata, setMetadata] = useState(null);
   const [source, setSource] = useState(null);
@@ -141,12 +143,16 @@ const VideoPlayer = () => {
       switchingList
         ? sourceId === "vidnest"
           ? "Trying Server List 2…"
-          : "Trying Server List 1…"
+          : sourceId === "vegamovies"
+            ? "Trying Server List 3…"
+            : "Trying Server List 1…"
         : sourceId === "vidnest"
           ? "Getting your stream ready…"
-          : pendingServer
-            ? `Loading ${serverDisplayName(pendingServer)} from Server List 1…`
-            : "Getting your stream ready…"
+          : sourceId === "vegamovies"
+            ? "Getting your stream ready…"
+            : pendingServer
+              ? `Loading ${serverDisplayName(pendingServer)} from Server List 1…`
+              : "Getting your stream ready…"
     );
 
     const start = async () => {
@@ -211,7 +217,12 @@ const VideoPlayer = () => {
         clearSourceFailed(sourceId);
         setSource(sourceForData(data, { sourceId }));
         setActiveServer(
-          data.server || (sourceId === "vidnest" ? "Vidnest" : null)
+          data.server ||
+            (sourceId === "vidnest"
+              ? "Vidnest"
+              : sourceId === "vegamovies"
+                ? "VegaMovies"
+                : null)
         );
         setSourceError(null);
         setSourceLoading(false);
@@ -284,6 +295,7 @@ const VideoPlayer = () => {
     (nextSource) => {
       const params = new URLSearchParams(window.location.search);
       if (nextSource === "vidnest") params.set("source", "2");
+      else if (nextSource === "vegamovies") params.set("source", "3");
       else params.delete("source");
       const query = params.toString();
       navigate(`/movie/${id}/watch${query ? `?${query}` : ""}`, {
@@ -311,6 +323,14 @@ const VideoPlayer = () => {
         preferredServerRef.current = "";
         setSourceId("vidnest");
         selectSource("vidnest");
+        return;
+      }
+
+      if (name === "VegaMovies") {
+        if (sourceId === "vegamovies") return;
+        preferredServerRef.current = "";
+        setSourceId("vegamovies");
+        selectSource("vegamovies");
         return;
       }
 
@@ -419,15 +439,25 @@ const VideoPlayer = () => {
         group: "Server List 2",
       },
     ];
-    return sourceId === "vidnest"
-      ? [...vidnest, ...viduki]
-      : [...viduki, ...vidnest];
+    const vegamovies = [
+      {
+        name: "VegaMovies",
+        label: "Server List 3",
+        language: "",
+        mp4: false,
+        upscale: false,
+        group: "Server List 3",
+      },
+    ];
+    if (sourceId === "vidnest") return [...vidnest, ...viduki, ...vegamovies];
+    if (sourceId === "vegamovies") return [...vegamovies, ...viduki, ...vidnest];
+    return [...viduki, ...vidnest, ...vegamovies];
   }, [servers, sourceId]);
 
   const handleFatalPlaybackError = useCallback(
     (error, failedSource) => {
       markSourceFailed(sourceId);
-      if (autoFallbackRef.current || sourceId === "vidnest") return;
+      if (autoFallbackRef.current || sourceId === "vidnest" || sourceId === "vegamovies") return;
       const listServers = servers.filter(
         (item) => item.group === "Server List 1"
       );
@@ -462,9 +492,14 @@ const VideoPlayer = () => {
     else navigate("/");
   }, [navigate]);
 
-  const otherSourceId = sourceId === "vidnest" ? "viduki" : "vidnest";
+  const otherSourceId =
+    sourceId === "vidnest" ? "viduki" : sourceId === "vegamovies" ? "viduki" : "vidnest";
   const otherSourceLabel =
-    otherSourceId === "vidnest" ? "Server List 2" : "Server List 1";
+    otherSourceId === "vidnest"
+      ? "Server List 2"
+      : otherSourceId === "vegamovies"
+        ? "Server List 3"
+        : "Server List 1";
   const currentSourceFailed =
     failedSources.has(sourceId) || Boolean(sourceError);
   const bothSourcesFailed =

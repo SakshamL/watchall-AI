@@ -28,16 +28,23 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.watchall.core.data.MediaSummary
 import com.watchall.core.vm.SearchFilter
@@ -54,6 +61,8 @@ import com.watchall.tv.ui.components.TvSectionHeader
 import com.watchall.tv.ui.components.TvSizes
 import com.watchall.tv.ui.components.TvViewMoreButton
 import com.watchall.tv.ui.theme.TvColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun TvSearchScreen(
@@ -63,6 +72,28 @@ fun TvSearchScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val fallbackFocus = remember { FocusRequester() }
     val searchFocus = LocalTvContentFocusRequester.current ?: fallbackFocus
+    val fieldFocus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val keyboard = LocalSoftwareKeyboardController.current
+    var editing by remember { mutableStateOf(false) }
+    var fieldWasFocused by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = editing) {
+        editing = false
+        keyboard?.hide()
+        scope.launch {
+            delay(80)
+            runCatching { searchFocus.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(editing) {
+        if (editing) {
+            delay(60)
+            runCatching { fieldFocus.requestFocus() }
+            keyboard?.show()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -73,56 +104,133 @@ fun TvSearchScreen(
             title = "Search",
             subtitle = "Find a film, a series, or an actor.",
         )
-        OutlinedTextField(
-            value = state.query,
-            onValueChange = viewModel::setQuery,
-            modifier = Modifier
-                .fillMaxWidth(0.62f)
-                .focusRequester(searchFocus),
-            placeholder = {
-                Text(
-                    text = "Search movies, shows, actors…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TvColors.TextMuted,
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    Icons.Outlined.Search,
-                    contentDescription = null,
-                    tint = TvColors.TextMuted,
-                    modifier = Modifier.size(18.dp),
-                )
-            },
-            trailingIcon = {
-                if (state.query.isNotBlank()) {
-                    IconButton(onClick = viewModel::clear) {
+        Row(
+            modifier = Modifier.fillMaxWidth(0.62f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (editing) {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = viewModel::setQuery,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(fieldFocus)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                fieldWasFocused = true
+                            } else if (editing && fieldWasFocused) {
+                                fieldWasFocused = false
+                                editing = false
+                                keyboard?.hide()
+                                scope.launch {
+                                    delay(80)
+                                    runCatching { searchFocus.requestFocus() }
+                                }
+                            }
+                        },
+                    placeholder = {
+                        Text(
+                            text = "Search movies, shows, actors…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TvColors.TextMuted,
+                        )
+                    },
+                    leadingIcon = {
                         Icon(
-                            Icons.Filled.Close,
-                            contentDescription = "Clear search",
+                            Icons.Outlined.Search,
+                            contentDescription = null,
                             tint = TvColors.TextMuted,
                             modifier = Modifier.size(18.dp),
                         )
+                    },
+                    trailingIcon = {
+                        if (state.query.isNotBlank()) {
+                            IconButton(onClick = viewModel::clear) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "Clear search",
+                                    tint = TvColors.TextMuted,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            viewModel.submit()
+                            editing = false
+                            keyboard?.hide()
+                            scope.launch {
+                                delay(80)
+                                runCatching { searchFocus.requestFocus() }
+                            }
+                        },
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = TvColors.Card,
+                        unfocusedContainerColor = TvColors.Card,
+                        focusedBorderColor = TvColors.Cyan.copy(alpha = 0.75f),
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.09f),
+                        focusedTextColor = TvColors.Text,
+                        unfocusedTextColor = TvColors.Text,
+                        cursorColor = TvColors.Cyan,
+                    ),
+                )
+            } else {
+                TvFocusable(
+                    onClick = { editing = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    focusRequester = searchFocus,
+                    scaleOnFocus = 1.01f,
+                    containerColor = TvColors.Card,
+                    focusedContainerColor = TvColors.Card,
+                    borderColor = Color.White.copy(alpha = 0.09f),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Search,
+                            contentDescription = null,
+                            tint = TvColors.TextMuted,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = state.query.ifBlank { "Search movies, shows, actors…" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (state.query.isBlank()) TvColors.TextMuted else TvColors.Text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = "OK to type",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TvColors.TextMuted.copy(alpha = 0.75f),
+                        )
                     }
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            textStyle = MaterialTheme.typography.bodyMedium,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = { viewModel.submit() },
-            ),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = TvColors.Card,
-                unfocusedContainerColor = TvColors.Card,
-                focusedBorderColor = TvColors.Cyan.copy(alpha = 0.75f),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.09f),
-                focusedTextColor = TvColors.Text,
-                unfocusedTextColor = TvColors.Text,
-                cursorColor = TvColors.Cyan,
-            ),
-        )
+                if (state.query.isNotBlank() && !editing) {
+                    TvChip(
+                        label = "Clear",
+                        selected = false,
+                        onClick = viewModel::clear,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(12.dp))
         LazyRow(
             modifier = Modifier.fillMaxWidth(),

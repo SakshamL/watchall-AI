@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/** Playback at or past this fraction of the runtime counts as finished. */
+private const val WATCHED_THRESHOLD = 0.90f
+
 data class SourceFailure(
     val title: String,
     val message: String,
@@ -151,6 +154,10 @@ class PlayerViewModel(
             switchList(SourceList.SERVER_TWO)
             return
         }
+        if (name.equals("VegaMovies", ignoreCase = true)) {
+            switchList(SourceList.SERVER_THREE)
+            return
+        }
         if (name == current.activeServer && !current.loading) {
             _state.value = current.copy(
                 notice = PlayerNotice(text = "Already playing from ${UiText.sourceName(name)}."),
@@ -253,6 +260,11 @@ class PlayerViewModel(
             durationMs = durationMs,
         )
         repository.saveProgress(entry)
+        val finished = durationMs > 0L && positionMs.toFloat() / durationMs >= WATCHED_THRESHOLD
+        if (finished) {
+            repository.markWatched(entry)
+            repository.clearProgress(entry.mediaKey)
+        }
     }
 
     fun saveProgressAtExit(positionMs: Long, durationMs: Long) {
@@ -267,6 +279,7 @@ class PlayerViewModel(
     private fun loadingMessage(source: SourceList, server: String?): String {
         return when {
             source == SourceList.SERVER_TWO -> "Trying Server List 2…"
+            source == SourceList.SERVER_THREE -> "Trying Server List 3…"
             !server.isNullOrBlank() -> "Opening ${UiText.sourceName(serverLabel(server))}…"
             else -> "Finding your stream…"
         }
@@ -303,6 +316,7 @@ class PlayerViewModel(
                 )
                 val active = when {
                     nextSource == SourceList.SERVER_TWO -> "Vidnest"
+                    nextSource == SourceList.SERVER_THREE -> "VegaMovies"
                     !stream.server.isNullOrBlank() -> stream.server
                     else -> server
                 }

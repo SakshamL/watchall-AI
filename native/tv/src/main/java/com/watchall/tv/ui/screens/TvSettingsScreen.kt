@@ -61,8 +61,10 @@ fun TvSettingsScreen(viewModel: SettingsViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val fallbackFocus = remember { FocusRequester() }
-    val addressFocus = LocalTvContentFocusRequester.current ?: fallbackFocus
-    val saveFocus = remember { FocusRequester() }
+    val addressFocus = remember { FocusRequester() }
+    // Down from the navigation bar should land on Save & test, not on the
+    // editable field (focusing a text field opens the on-screen keyboard).
+    val saveFocus = LocalTvContentFocusRequester.current ?: fallbackFocus
     val testFocus = remember { FocusRequester() }
     var address by rememberSaveable { mutableStateOf(state.settings.apiBaseUrl) }
 

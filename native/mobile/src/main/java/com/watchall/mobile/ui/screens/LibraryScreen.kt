@@ -39,6 +39,7 @@ import com.watchall.mobile.ui.components.PosterCard
 import com.watchall.mobile.ui.components.RoundIconButton
 import com.watchall.mobile.ui.components.ScreenTitle
 import com.watchall.mobile.ui.components.SectionHeader
+import com.watchall.mobile.ui.components.WatchedCard
 import com.watchall.mobile.ui.theme.WatchColors
 
 @Composable
@@ -50,10 +51,11 @@ fun LibraryScreen(
 ) {
     var version by remember { mutableIntStateOf(0) }
     val resume = remember(version) { repository.continueWatching() }
+    val watched = remember(version) { repository.watched() }
     val saved = remember(version) { repository.watchlist().map { it.media } }
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
-    if (resume.isEmpty() && saved.isEmpty()) {
+    if (resume.isEmpty() && watched.isEmpty() && saved.isEmpty()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -73,7 +75,7 @@ fun LibraryScreen(
             EmptyPanel(
                 icon = Icons.Outlined.BookmarkBorder,
                 title = "Your library is waiting",
-                message = "Save a film or series from its details page, and it will live here.",
+                message = "Save a title from its details page, or finish watching one, and it will live here.",
             )
         }
         return
@@ -119,6 +121,32 @@ fun LibraryScreen(
                                     repository.clearProgress(entry.mediaKey)
                                     version++
                                     onContinueWatchingRemoved()
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (watched.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.padding(top = 8.dp)) {
+                    SectionHeader(
+                        title = "Watched",
+                        eyebrow = "${watched.size} finished title${if (watched.size == 1) "" else "s"}",
+                    )
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(watched, key = { it.mediaKey }) { entry ->
+                            WatchedCard(
+                                entry = entry,
+                                onClick = { onOpenDetails(entry.toSummary()) },
+                                onRemove = {
+                                    repository.removeWatched(entry.mediaKey)
+                                    version++
                                 },
                             )
                         }

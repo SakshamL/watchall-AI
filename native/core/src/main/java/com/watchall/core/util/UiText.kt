@@ -13,6 +13,7 @@ object UiText {
         if (name.isNullOrBlank()) return "Auto"
         return when (name.lowercase()) {
             "vidnest" -> SourceList.SERVER_TWO.displayName
+            "vegamovies" -> SourceList.SERVER_THREE.displayName
             "viduki" -> SourceList.SERVER_ONE.displayName
             else -> name
         }
@@ -21,6 +22,7 @@ object UiText {
     fun sanitize(message: String): String =
         message
             .replace("Vidnest", SourceList.SERVER_TWO.displayName, ignoreCase = true)
+            .replace("Vegamovies", SourceList.SERVER_THREE.displayName, ignoreCase = true)
             .replace("Viduki", SourceList.SERVER_ONE.displayName, ignoreCase = true)
 
     fun friendlyError(error: Throwable): String {

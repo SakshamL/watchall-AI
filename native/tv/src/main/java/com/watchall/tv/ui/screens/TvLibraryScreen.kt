@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -23,6 +27,7 @@ import com.watchall.tv.ui.components.TvPageHeader
 import com.watchall.tv.ui.components.TvPosterGrid
 import com.watchall.tv.ui.components.TvSectionHeader
 import com.watchall.tv.ui.components.TvSizes
+import com.watchall.tv.ui.components.TvWatchedRow
 
 @Composable
 fun TvLibraryScreen(
@@ -31,11 +36,13 @@ fun TvLibraryScreen(
     onPlay: (PlayerRequest) -> Unit,
     onBrowse: () -> Unit,
 ) {
-    val resume = repository.continueWatching()
-    val saved = repository.watchlist().map { it.media }
+    var version by remember { mutableIntStateOf(0) }
+    val resume = remember(version) { repository.continueWatching() }
+    val watched = remember(version) { repository.watched() }
+    val saved = remember(version) { repository.watchlist().map { it.media } }
     val contentFocus = LocalTvContentFocusRequester.current
 
-    if (resume.isEmpty() && saved.isEmpty()) {
+    if (resume.isEmpty() && watched.isEmpty() && saved.isEmpty()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -53,7 +60,7 @@ fun TvLibraryScreen(
             ) {
                 TvEmpty(
                     title = "Your library is waiting",
-                    message = "Save a film or series, or start watching something, and it will appear here.",
+                    message = "Save a film or series, start watching something, or finish a title, and it will appear here.",
                     actionLabel = "Browse titles",
                     onAction = onBrowse,
                     actionFocus = contentFocus,
@@ -94,6 +101,22 @@ fun TvLibraryScreen(
             )
         }
 
+        if (watched.isNotEmpty()) {
+            TvSectionHeader(
+                title = "Watched",
+                eyebrow = "${watched.size} finished · hold OK to remove",
+            )
+            TvWatchedRow(
+                entries = watched,
+                onOpen = { entry -> onOpenDetails(entry.toSummary()) },
+                onRemove = { entry ->
+                    repository.removeWatched(entry.mediaKey)
+                    version++
+                },
+                firstFocusRequester = if (resume.isEmpty()) contentFocus else null,
+            )
+        }
+
         if (saved.isNotEmpty()) {
             TvSectionHeader(
                 title = "My list",
@@ -103,7 +126,7 @@ fun TvLibraryScreen(
                 items = saved,
                 onOpen = onOpenDetails,
                 modifier = Modifier.weight(1f),
-                firstFocusRequester = if (resume.isEmpty()) contentFocus else null,
+                firstFocusRequester = if (resume.isEmpty() && watched.isEmpty()) contentFocus else null,
             )
         } else {
             Spacer(Modifier.weight(1f))

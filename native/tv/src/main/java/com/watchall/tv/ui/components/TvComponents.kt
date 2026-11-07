@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -86,6 +88,7 @@ import com.watchall.core.data.ImageUrls
 import com.watchall.core.data.MediaSummary
 import com.watchall.core.data.MediaType
 import com.watchall.core.data.ResumeEntry
+import com.watchall.core.data.WatchedEntry
 import com.watchall.tv.ui.theme.TvColors
 
 /**
@@ -153,7 +156,11 @@ fun TvFocusable(
     borderColor: Color = Color.White.copy(alpha = 0.09f),
     focusBorderColor: Color = TvColors.Cyan,
     onFocusChange: ((Boolean) -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
     bringIntoViewOnFocus: Boolean = true,
     content: @Composable () -> Unit,
 ) {
@@ -191,6 +198,15 @@ fun TvFocusable(
                 if (leftFocusRequester != null) {
                     left = leftFocusRequester
                 }
+                if (rightFocusRequester != null) {
+                    right = rightFocusRequester
+                }
+                if (upFocusRequester != null) {
+                    up = upFocusRequester
+                }
+                if (downFocusRequester != null) {
+                    down = downFocusRequester
+                }
             }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(shape)
@@ -206,12 +222,25 @@ fun TvFocusable(
                 color = if (focused) focusBorderColor else borderColor,
                 shape = shape,
             )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                enabled = enabled,
-                role = Role.Button,
-                onClick = onClick,
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        enabled = enabled,
+                        role = Role.Button,
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                    )
+                } else {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        enabled = enabled,
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                },
             )
             .padding(2.dp),
     ) {
@@ -626,6 +655,11 @@ fun TvActionButton(
     focusRequester: FocusRequester? = null,
     enabled: Boolean = true,
     onFocusChange: ((Boolean) -> Unit)? = null,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    bringIntoViewOnFocus: Boolean = true,
 ) {
     var focused by remember { mutableStateOf(false) }
     val primaryBrush = Brush.linearGradient(
@@ -648,6 +682,11 @@ fun TvActionButton(
         focusRequester = focusRequester,
         enabled = enabled,
         scaleOnFocus = if (primary) 1.045f else 1.035f,
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        bringIntoViewOnFocus = bringIntoViewOnFocus,
         containerColor = when {
             !enabled -> TvColors.Card.copy(alpha = 0.46f)
             primary -> Color.Transparent
@@ -1116,13 +1155,131 @@ fun TvContinueRow(
 }
 
 @Composable
+fun TvWatchedCard(
+    entry: WatchedEntry,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    TvFocusable(
+        onClick = onClick,
+        onLongClick = onRemove,
+        modifier = modifier.width(148.dp),
+        shape = RoundedCornerShape(11.dp),
+        focusRequester = focusRequester,
+        scaleOnFocus = 1.035f,
+        onFocusChange = { focused = it },
+        containerColor = TvColors.Card,
+        focusedContainerColor = TvColors.CardHigh,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f),
+            ) {
+                TvRemoteImage(
+                    path = entry.posterPath ?: entry.backdropPath,
+                    contentDescription = entry.displayTitle,
+                    size = "w342",
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.6f)),
+                            ),
+                        ),
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(7.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(TvColors.Cyan.copy(alpha = 0.94f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        contentDescription = "Watched",
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                if (focused) {
+                    Text(
+                        text = "Hold OK to remove",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 12.sp),
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.62f))
+                            .padding(vertical = 4.dp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Column(Modifier.padding(start = 9.dp, end = 8.dp, top = 7.dp, bottom = 8.dp)) {
+                Text(
+                    text = entry.displayTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TvColors.Text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = entry.subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TvColors.TextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TvWatchedRow(
+    entries: List<WatchedEntry>,
+    onOpen: (WatchedEntry) -> Unit,
+    onRemove: (WatchedEntry) -> Unit,
+    modifier: Modifier = Modifier,
+    firstFocusRequester: FocusRequester? = null,
+) {
+    if (entries.isEmpty()) return
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        itemsIndexed(entries, key = { _, entry -> entry.mediaKey }) { index, entry ->
+            TvWatchedCard(
+                entry = entry,
+                onClick = { onOpen(entry) },
+                onRemove = { onRemove(entry) },
+                focusRequester = if (index == 0) firstFocusRequester else null,
+            )
+        }
+    }
+}
+
+@Composable
 fun TvPosterGrid(
     items: List<MediaSummary>,
     onOpen: (MediaSummary) -> Unit,
     modifier: Modifier = Modifier,
     firstFocusRequester: FocusRequester? = null,
     state: LazyGridState = rememberLazyGridState(),
-    contentPadding: PaddingValues = PaddingValues(bottom = 24.dp),
+    contentPadding: PaddingValues = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
     footer: (@Composable () -> Unit)? = null,
 ) {
     LazyVerticalGrid(

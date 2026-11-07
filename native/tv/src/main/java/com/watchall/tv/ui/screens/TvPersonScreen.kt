@@ -5,7 +5,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -224,7 +223,6 @@ fun TvPersonScreen(
                 modifier = Modifier.weight(1f),
                 firstFocusRequester = if (!didInitialFocus) firstItemFocus else null,
                 state = gridState,
-                contentPadding = PaddingValues(bottom = 24.dp),
             )
         }
     }

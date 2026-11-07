@@ -12,6 +12,7 @@ import com.watchall.core.data.SeasonDetails
 import com.watchall.core.data.ServerInfo
 import com.watchall.core.data.SourceList
 import com.watchall.core.data.StreamResult
+import com.watchall.core.data.WatchedEntry
 import com.watchall.core.data.WatchlistItem
 import com.watchall.core.net.TmdbClient
 import com.watchall.core.net.WatchAllApi
@@ -139,6 +140,12 @@ class WatchAllRepository(
     fun saveProgress(entry: ResumeEntry) = preferences.saveResume(entry)
 
     fun clearProgress(mediaKey: String) = preferences.removeResume(mediaKey)
+
+    fun watched(): List<WatchedEntry> = preferences.watched()
+
+    fun markWatched(entry: ResumeEntry) = preferences.markWatched(entry)
+
+    fun removeWatched(mediaKey: String) = preferences.removeWatched(mediaKey)
 
     fun watchlist(): List<WatchlistItem> = preferences.watchlist()
 

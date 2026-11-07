@@ -62,7 +62,9 @@ export const captionSizeKey = "watchall:player:caption-size";
 export const alternateServerId = "Vidnest";
 
 export function serverDisplayName(name) {
-  return name === alternateServerId ? "Server List 2" : name;
+  if (name === alternateServerId) return "Server List 2";
+  if (name === "VegaMovies") return "Server List 3";
+  return name;
 }
 
 export function getDeviceProfile() {

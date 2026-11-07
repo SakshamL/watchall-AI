@@ -1,6 +1,7 @@
 package com.watchall.tv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -72,12 +74,22 @@ fun TvHomeScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val contentFocus = LocalTvContentFocusRequester.current
-    val heroPlayFocus = remember { FocusRequester() }
+    val fallbackFocus = remember { FocusRequester() }
+    // The Play button is the first focus target on Home, so it also serves as
+    // the destination for Down from the top navigation bar.
+    val heroPlayFocus = contentFocus ?: fallbackFocus
     val scope = rememberCoroutineScope()
     var pendingPlay by remember { mutableStateOf<PlayerRequest?>(null) }
 
     when {
-        state.loading && state.feed == null -> TvHomeSkeleton()
+        state.loading && state.feed == null -> Box(
+            Modifier
+                .fillMaxSize()
+                .focusRequester(heroPlayFocus)
+                .focusable(),
+        ) {
+            TvHomeSkeleton()
+        }
 
         state.error != null && state.feed == null -> Box(
             modifier = Modifier

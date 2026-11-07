@@ -106,6 +106,7 @@ fun SourcePickerDialog(
                     val subtitle = when {
                         !enabled -> "Movies only · not available for TV shows"
                         source == SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
+                        source == SourceList.SERVER_THREE -> "VegaMovies · streaming"
                         else -> "Alternative · movies only · can be slower"
                     }
                     Surface(

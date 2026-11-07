@@ -45,11 +45,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.watchall.core.WatchAllGraph
@@ -311,19 +306,7 @@ private fun TvTopNav(
                 .fillMaxWidth()
                 .height(58.dp)
                 .background(TvColors.DeepInk)
-                .padding(horizontal = 32.dp)
-                // Down from the bar goes to the current screen's primary action.
-                // The requester may not be attached yet (for example while Home
-                // is still showing its first-load skeleton), so the request is
-                // guarded and an unconsumed event falls back to Compose focus
-                // search instead of throwing.
-                .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        runCatching { contentFocusRequester.requestFocus() }.isSuccess
-                    } else {
-                        false
-                    }
-                },
+                .padding(horizontal = 32.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TvBrand()
@@ -342,6 +325,7 @@ private fun TvTopNav(
                     modifier = Modifier.height(36.dp),
                     shape = RoundedCornerShape(8.dp),
                     focusRequester = focusRequesters.getValue(item),
+                    downFocusRequester = contentFocusRequester,
                     scaleOnFocus = 1.02f,
                     containerColor = if (isSelected) {
                         TvColors.Cyan.copy(alpha = 0.10f)

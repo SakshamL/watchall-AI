@@ -163,6 +163,7 @@ fun TvDetailsScreen(
             onSelectSeason = viewModel::selectSeason,
             onSelectEpisode = viewModel::selectEpisode,
             playFocus = playFocus,
+            backFocus = backFocus,
         )
     }
 }
@@ -178,12 +179,22 @@ private fun TvDetailsContent(
     onSelectSeason: (Int) -> Unit,
     onSelectEpisode: (Int) -> Unit,
     playFocus: FocusRequester,
+    backFocus: FocusRequester,
 ) {
     val details = state.details!!
     val selectedEpisode = state.currentEpisode
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var pendingPlay by remember { mutableStateOf<PlayerRequest?>(null) }
+
+    // Focusing the Play button must not push the hero upwards. Keep the page
+    // pinned to the top when it first opens; the button is already on screen.
+    LaunchedEffect(Unit) {
+        delay(240)
+        if (listState.firstVisibleItemScrollOffset < 160) {
+            runCatching { listState.scrollToItem(0) }
+        }
+    }
     val watchLabel = when {
         details.mediaType == MediaType.TV && selectedEpisode != null -> "Play ${selectedEpisode.code}"
         details.mediaType == MediaType.TV -> "Play episode"
@@ -215,6 +226,7 @@ private fun TvDetailsContent(
                     },
                     onToggleWatchlist = onToggleWatchlist,
                     playFocus = playFocus,
+                    backFocus = backFocus,
                     onPlayFocused = {
                         if (listState.firstVisibleItemIndex > 0 ||
                             listState.firstVisibleItemScrollOffset > 0
@@ -347,6 +359,9 @@ private fun TvDetailsContent(
 
         BackButton(
             onBack = onBack,
+            focusRequester = backFocus,
+            downFocusRequester = playFocus,
+            rightFocusRequester = playFocus,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(TvSizes.PagePadding / 2),
@@ -381,6 +396,7 @@ private fun TvDetailsHero(
     onWatch: () -> Unit,
     onToggleWatchlist: () -> Unit,
     playFocus: FocusRequester,
+    backFocus: FocusRequester,
     onPlayFocused: () -> Unit,
     enabled: Boolean,
 ) {
@@ -533,6 +549,8 @@ private fun TvDetailsHero(
                         icon = Icons.Filled.PlayArrow,
                         primary = true,
                         focusRequester = playFocus,
+                        upFocusRequester = backFocus,
+                        bringIntoViewOnFocus = false,
                         enabled = enabled,
                         onFocusChange = { focused -> if (focused) onPlayFocused() },
                     )
@@ -540,6 +558,7 @@ private fun TvDetailsHero(
                         label = if (watchlisted) "In My List" else "Add to My List",
                         onClick = onToggleWatchlist,
                         icon = if (watchlisted) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        upFocusRequester = backFocus,
                     )
                 }
             }
@@ -725,6 +744,8 @@ private fun BackButton(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
 ) {
     TvIconButton(
         icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -732,6 +753,8 @@ private fun BackButton(
         onClick = onBack,
         modifier = modifier,
         focusRequester = focusRequester,
+        rightFocusRequester = rightFocusRequester,
+        downFocusRequester = downFocusRequester,
     )
 }
 
@@ -742,6 +765,8 @@ fun TvIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     TvFocusable(
@@ -749,6 +774,8 @@ fun TvIconButton(
         modifier = modifier.size(42.dp),
         shape = RoundedCornerShape(10.dp),
         focusRequester = focusRequester,
+        rightFocusRequester = rightFocusRequester,
+        downFocusRequester = downFocusRequester,
         scaleOnFocus = 1.05f,
         containerColor = Color.Black.copy(alpha = 0.42f),
         focusedContainerColor = TvColors.CardHigh,

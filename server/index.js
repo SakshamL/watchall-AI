@@ -583,10 +583,13 @@ async function probeStream(url, kind) {
 app.get("/api/extract", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const { tmdb, type = "movie", season, episode } = req.query;
+  const rawSource = String(req.query.source || "").trim().toLowerCase();
   const source =
-    String(req.query.source || "").trim().toLowerCase() === "vidnest"
+    rawSource === "vidnest" || rawSource === "2"
       ? "vidnest"
-      : "viduki";
+      : rawSource === "vegamovies" || rawSource === "3"
+        ? "vegamovies"
+        : "viduki";
   const forcedSrv =
     typeof req.query.srv === "string" ? req.query.srv.trim().replace(/[^A-Za-z]/g, "") : "";
   // TMDB original_language of the title (e.g. "hi"). Hindi titles get Viduki's
@@ -637,6 +640,34 @@ app.get("/api/extract", async (req, res) => {
         ? "This server list could not find a playable stream for this title. Try Server List 1."
         : raw ||
           "This server list could not find a playable stream for this title. Try Server List 1.";
+      return res.status(502).json({ error: safe });
+    }
+  }
+
+  if (source === "vegamovies") {
+    if (!/^\\d{1,10}$/.test(String(tmdb))) {
+      return res.status(400).json({ error: "A numeric TMDB id is required." });
+    }
+    const cacheKey = `vegamovies:${type}:${tmdb}`;
+    const cached = getCachedExtract(cacheKey);
+    if (cached) {
+      console.log(`[vegamovies] Cache hit: ${cacheKey}`);
+      return res.json(cached);
+    }
+
+    console.log(`[vegamovies] Extracting: tmdb=${tmdb} type=${type}`);
+
+    try {
+      const data = await extractVegamoviesServer(tmdb, type, getBrowser);
+      setCachedExtract(cacheKey, data);
+      console.log(`[vegamovies] Result: type=${data.type}`);
+      return res.json(data);
+    } catch (error) {
+      console.error(`[vegamovies] Error: ${error.message}`);
+      const raw = String(error?.message || "");
+      const safe = /vegamovies|https?:\/\//i.test(raw)
+        ? "Server List 3 could not find a playable stream for this title. Try another server list."
+        : raw || "Server List 3 could not find a playable stream for this title. Try another server list.";
       return res.status(502).json({ error: safe });
     }
   }
@@ -1722,6 +1753,124 @@ function rewriteDashManifest(text, manifestUrl) {
 
   walk(root, manifestUrl);
   return serializeXml(root);
+}
+
+// ─── 2b. VEGAMOVIES dynamic extractor ───────────────────────────────────────
+// VegaMovies embeds a streaming player via an iframe (slast430did.com) that
+// loads an HLS stream from geoxe446syt.com. Extraction uses Puppeteer to
+// intercept the .m3u8 request.
+
+const TMDB_API_KEY_SERVER = "04c35731a5ee918f014970082a0088b1";
+const TMDB_BASE_SERVER = "https://api.themoviedb.org/3";
+
+async function extractVegamoviesServer(tmdb, type, getBrowser) {
+  // Get TMDB title
+  let title = null;
+  for (const t of ["movie", "tv"]) {
+    try {
+      const res = await axios.get(
+        `${TMDB_BASE_SERVER}/${t}/${encodeURIComponent(tmdb)}?api_key=${TMDB_API_KEY_SERVER}`,
+        { timeout: 10000 }
+      );
+      title = res.data.title || res.data.name || res.data.original_title || res.data.original_name;
+      if (title) break;
+    } catch {}
+  }
+  if (!title) throw new Error("TMDB title not found for id " + tmdb);
+
+  const browser = await getBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+    );
+    await page.setViewport({ width: 1366, height: 768 });
+
+    const candidates = new Map();
+
+    page.on("request", (request) => {
+      const url = request.url();
+      if (!/^https?:\/\//i.test(url)) return;
+      const pathname = new URL(url).pathname.toLowerCase();
+      const kind = pathname.includes(".m3u8") ? "hls" : pathname.includes(".mpd") ? "dash" : pathname.match(/\.mp4$/) ? "mp4" : "";
+      if (kind && !/\.(ts|m4s|aac|vtt|srt|key|jpg|jpeg|png|gif|webp|ico|css|js|woff2?|ttf|map)([?#]|$)/i.test(url)) {
+        const now = Date.now();
+        if (!candidates.has(kind)) {
+          candidates.set(kind, { url, type: kind, firstSeen: now, lastSeen: now });
+        } else {
+          candidates.get(kind).url = url;
+          candidates.get(kind).lastSeen = now;
+        }
+      }
+    });
+
+    // Search VegaMovies
+    await page.goto("https://vegamovies4.co.in/", { waitUntil: "networkidle2", timeout: 20000 });
+    await page.evaluate((t) => {
+      const input = document.querySelector('input[name="story"]');
+      if (input) input.value = t;
+      const form = document.querySelector('form');
+      if (form) form.submit();
+    }, title);
+    await new Promise((r) => setTimeout(r, 5000));
+
+    const html = await page.content();
+    const linkRe = /vegamovies4\.co\.in\/(\d+-[a-z0-9-]+\.html)/gi;
+    const matches = [...html.matchAll(linkRe)].map((m) => m[1]);
+    const unique = [...new Set(matches)];
+
+    if (!unique.length) throw new Error("No VegaMovies results for " + title);
+
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const target = norm(title);
+    let movieUrl = null;
+    for (const slug of unique) {
+      const titlePart = slug.replace(/^\d+-/, "").replace(/\.html$/, "").replace(/-/g, " ");
+      if (norm(titlePart).includes(target) || target.includes(norm(titlePart))) {
+        movieUrl = "https://vegamovies4.co.in/" + slug;
+        break;
+      }
+    }
+    if (!movieUrl) movieUrl = "https://vegamovies4.co.in/" + unique[0];
+
+    // Navigate to movie page and extract stream
+    await page.goto(movieUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (candidates.has("hls") || candidates.has("mp4") || candidates.has("dash")) {
+        await new Promise((r) => setTimeout(r, 500));
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    let streamUrl = null;
+    let streamType = null;
+    if (candidates.has("hls")) {
+      streamUrl = candidates.get("hls").url;
+      streamType = "hls";
+    } else if (candidates.has("mp4")) {
+      streamUrl = candidates.get("mp4").url;
+      streamType = "mp4";
+    } else if (candidates.has("dash")) {
+      streamUrl = candidates.get("dash").url;
+      streamType = "dash";
+    }
+
+    if (!streamUrl) throw new Error("No stream found on VegaMovies page.");
+
+    return {
+      streamUrl,
+      type: streamType,
+      server: "VegaMovies",
+      source: "vegamovies",
+      referer: movieUrl,
+      forceProxy: true,
+    };
+  } finally {
+    try { await browser.close(); } catch {}
+  }
 }
 
 // ─── 3. NETNAIJA (MovieBox/Aoneroom) dynamic extractor ──────────────────────

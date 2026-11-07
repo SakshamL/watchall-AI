@@ -193,7 +193,7 @@ fun TvBrowseScreen(
                     onOpen = onOpenDetails,
                     modifier = Modifier.weight(1f),
                     state = gridState,
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
                     footer = if (state.page < state.totalPages) {
                         {
                             Row(
