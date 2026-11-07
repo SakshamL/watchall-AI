@@ -992,3 +992,32 @@ native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
 How it was verified:
 - :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
 - No 1 GB TV device was available, so stutter reduction could not be measured on hardware.
+---
+
+Date: Sat Nov 07 2026
+Area: TV button focus, card viewport, Browse layout, auto-paging
+
+Issue/Feature:
+1. Focused buttons (especially Play/primary) were hard to see due to low-contrast focus styling.
+2. Topmost primary button focus did not scroll the page back to top.
+3. VegaMovies requires a numeric TMDB id (handled by passing mediaId).
+4. Bottom cards in a viewport showed only the poster, cutting off the title.
+5. Browse filters/header consumed too much vertical space.
+6. Browse loaded more only via "Load more" button; needed earlier auto-load.
+
+What was changed and how it works now:
+- TvFocusable focus border thickened to 3 dp and kept cyan, making focused buttons clearly visible.
+- TvPosterCard (and landscape/watched/continue cards) are now fully focusable including title/subtitle, so bringIntoView scrolls the whole card into the viewport.
+- Home hero Play button now scrolls the page to top on focus.
+- Browse title/filter row compacted (smaller title, 24 dp row, compact chips, reduced spacing).
+- Auto-load threshold changed from 6 to 12 items before the end, so next pages prefetch 1-2 rows early.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+
+How it was verified:
+- :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
+- No TV device available to visually confirm focus/scroll behavior.
