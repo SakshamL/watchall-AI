@@ -59,6 +59,7 @@ const sourceForData = (data, { sourceId, server = null, forceProxy = false }) =>
 
 const VideoPlayer = () => {
   const { id } = useParams();
+  const tmdbId = String(id ?? "").match(/\d+/)?.[0] || String(id ?? "").trim();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const urlSourceValue = searchParams.get("source");
@@ -158,7 +159,7 @@ const VideoPlayer = () => {
     const start = async () => {
       let details = null;
       try {
-        details = await movieAPI.getMovieDetails(id);
+        details = await movieAPI.getMovieDetails(tmdbId);
       } catch {
         details = null;
       }
@@ -183,7 +184,7 @@ const VideoPlayer = () => {
           ? null
           : consumePrefetchedStream(
               prefetchKey({
-                mediaId: id,
+                mediaId: tmdbId,
                 mediaType: "movie",
                 source: sourceId,
                 language: lang,
@@ -193,7 +194,7 @@ const VideoPlayer = () => {
         let data = prefetched;
         if (!data) {
           const response = await fetch(
-            `/api/extract?tmdb=${encodeURIComponent(id)}&type=movie&source=${sourceId}${serverParam}${langParam}`,
+            `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=${sourceId}${serverParam}${langParam}`,
             { signal: controller.signal }
           );
           try {
@@ -351,7 +352,7 @@ const VideoPlayer = () => {
 
       try {
         const response = await fetch(
-          `/api/extract?tmdb=${encodeURIComponent(id)}&type=movie&source=viduki&srv=${encodeURIComponent(name)}${langParam}`,
+          `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=viduki&srv=${encodeURIComponent(name)}${langParam}`,
           { signal: controller.signal }
         );
         let data = null;

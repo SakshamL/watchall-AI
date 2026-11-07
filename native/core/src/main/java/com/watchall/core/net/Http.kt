@@ -6,7 +6,9 @@ import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Cache
 import okhttp3.Response
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -18,19 +20,31 @@ class HttpStatusException(
     url: String,
 ) : IOException("HTTP $statusCode for $url")
 
-internal val tmdbHttpClient: OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(20, TimeUnit.SECONDS)
-    .readTimeout(30, TimeUnit.SECONDS)
-    .callTimeout(45, TimeUnit.SECONDS)
-    .retryOnConnectionFailure(true)
-    .build()
+internal var httpCacheDir: File? = null
 
-internal val backendHttpClient: OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(20, TimeUnit.SECONDS)
-    .readTimeout(120, TimeUnit.SECONDS)
-    .callTimeout(150, TimeUnit.SECONDS)
-    .retryOnConnectionFailure(true)
-    .build()
+fun configureHttpCache(cacheDir: File) {
+    httpCacheDir = cacheDir
+}
+
+internal val tmdbHttpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .cache(httpCacheDir?.let { Cache(File(it, "tmdb_http_cache"), 32L * 1024 * 1024) })
+        .build()
+}
+
+internal val backendHttpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .callTimeout(150, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .cache(httpCacheDir?.let { Cache(File(it, "backend_http_cache"), 128L * 1024 * 1024) })
+        .build()
+}
 
 internal suspend fun OkHttpClient.getText(
     url: HttpUrl,
