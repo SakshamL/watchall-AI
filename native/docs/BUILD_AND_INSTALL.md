@@ -18,18 +18,15 @@ Create or edit `native/local.properties`:
 ```properties
 sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
 TMDB_API_KEY=<your TMDB v3 API key>
-DEFAULT_API_BASE_URL=http://192.168.1.4:3001
+DEFAULT_API_BASE_URL=https://watchall-media.vercel.app
 ```
 
 Notes:
 
 - `local.properties` is gitignored. Do not commit it.
 - `DEFAULT_API_BASE_URL` is compiled into the shared core. The fallback used by the code when the
-  property is absent is `http://10.0.2.2:3001`, which is the Android emulator's alias for the host
-  machine.
-- The checked-in project currently defaults to the LAN address `192.168.1.4:3001`. This is a DHCP
-  address and can change; check it with `ipconfig` and rebuild, or change it in the app's Settings
-  screen.
+  property is absent is `https://watchall-media.vercel.app`.
+- The checked-in project defaults to the WatchAll server at `https://watchall-media.vercel.app`.
 - The backend address can also be changed at runtime in the app's Settings screen.
 
 ## 3. Start the backend

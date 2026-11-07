@@ -98,11 +98,11 @@ import com.watchall.tv.ui.theme.TvColors
  * and felt oversized.
  */
 object TvSizes {
-    val PosterWidth = 120.dp
-    val PosterGap = 15.dp
-    val ContinueWidth = 300.dp
-    val ContinueHeight = 104.dp
-    val PagePadding = 40.dp
+    val PosterWidth = 118.dp
+    val PosterGap = 14.dp
+    val ContinueWidth = 284.dp
+    val ContinueHeight = 98.dp
+    val PagePadding = 32.dp
 }
 
 /** The focus target the selected nav tab should move to when Down is pressed. */
@@ -168,7 +168,7 @@ fun TvFocusable(
     val interactionSource = remember { MutableInteractionSource() }
     val scale by animateFloatAsState(
         targetValue = if (focused) scaleOnFocus else 1f,
-        animationSpec = tween(durationMillis = 110, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 90, easing = FastOutSlowInEasing),
         label = "tv-focus-scale",
     )
     val bringIntoView = remember { BringIntoViewRequester() }
@@ -258,6 +258,9 @@ fun TvPosterCard(
     focusRequester: FocusRequester? = null,
     onFocusChange: ((Boolean) -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
     bringIntoViewOnFocus: Boolean = true,
 ) {
     val columnModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
@@ -272,6 +275,9 @@ fun TvPosterCard(
             scaleOnFocus = 1.05f,
             onFocusChange = onFocusChange,
             leftFocusRequester = leftFocusRequester,
+            rightFocusRequester = rightFocusRequester,
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
             bringIntoViewOnFocus = bringIntoViewOnFocus,
         ) {
             Box(Modifier.fillMaxSize()) {
@@ -747,11 +753,16 @@ fun TvChip(
     selected: Boolean,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     TvFocusable(
         onClick = onClick,
-        modifier = Modifier.height(34.dp),
+        modifier = Modifier.height(if (compact) 30.dp else 34.dp),
         shape = RoundedCornerShape(8.dp),
         focusRequester = focusRequester,
         scaleOnFocus = 1.035f,
@@ -759,6 +770,10 @@ fun TvChip(
         focusedContainerColor = if (selected) TvColors.Cyan.copy(alpha = 0.19f) else TvColors.CardHigh,
         borderColor = if (selected) TvColors.Cyan.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.08f),
         onFocusChange = { focused = it },
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
     ) {
         Box(
             modifier = Modifier
@@ -766,7 +781,7 @@ fun TvChip(
                 // second chip in a Row is not squeezed out of view.
                 .fillMaxHeight()
                 .wrapContentWidth()
-                .padding(horizontal = 15.dp),
+                .padding(horizontal = if (compact) 13.dp else 15.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1278,12 +1293,14 @@ fun TvPosterGrid(
     onOpen: (MediaSummary) -> Unit,
     modifier: Modifier = Modifier,
     firstFocusRequester: FocusRequester? = null,
+    firstItemUpFocusRequester: FocusRequester? = null,
+    minColumnWidth: Dp = 118.dp,
     state: LazyGridState = rememberLazyGridState(),
     contentPadding: PaddingValues = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
     footer: (@Composable () -> Unit)? = null,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 118.dp),
+        columns = GridCells.Adaptive(minSize = minColumnWidth),
         modifier = modifier.fillMaxWidth(),
         state = state,
         contentPadding = contentPadding,
@@ -1296,6 +1313,7 @@ fun TvPosterGrid(
                 onClick = { onOpen(media) },
                 width = null,
                 focusRequester = if (index == 0) firstFocusRequester else null,
+                upFocusRequester = if (index == 0) firstItemUpFocusRequester else null,
             )
         }
         if (footer != null) {

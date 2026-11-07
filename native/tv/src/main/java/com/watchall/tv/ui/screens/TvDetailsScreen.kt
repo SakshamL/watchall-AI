@@ -2,6 +2,7 @@ package com.watchall.tv.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,7 +25,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -81,14 +81,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun TvDetailsScreen(
     viewModel: DetailsViewModel,
-    onBack: () -> Unit,
     onPlay: (PlayerRequest) -> Unit,
     onOpenDetails: (MediaSummary) -> Unit,
     onOpenPerson: (CastMember) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playFocus = remember { FocusRequester() }
-    val backFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
     var didInitialFocus by remember { mutableStateOf(false) }
 
@@ -98,33 +96,26 @@ fun TvDetailsScreen(
         val ready = details != null &&
             (details.mediaType == MediaType.MOVIE || state.currentEpisode != null)
         if (ready) {
-            delay(120)
+            delay(90)
             runCatching { playFocus.requestFocus() }.onSuccess { didInitialFocus = true }
         }
     }
 
     LaunchedEffect(state.error) {
         if (state.error != null && state.details == null) {
-            delay(110)
+            delay(90)
             runCatching { retryFocus.requestFocus() }
         }
     }
 
     when {
         state.loading && state.details == null -> {
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusable(),
+            ) {
                 TvLoading("Opening the story…")
-                BackButton(
-                    onBack = onBack,
-                    focusRequester = backFocus,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(TvSizes.PagePadding / 2),
-                )
-                LaunchedEffect(Unit) {
-                    delay(80)
-                    runCatching { backFocus.requestFocus() }
-                }
             }
         }
 
@@ -140,22 +131,13 @@ fun TvDetailsScreen(
                     message = state.error.orEmpty(),
                     primaryLabel = "Try again",
                     onPrimary = viewModel::load,
-                    secondaryLabel = "Go back",
-                    onSecondary = onBack,
                     primaryFocus = retryFocus,
-                )
-                BackButton(
-                    onBack = onBack,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(TvSizes.PagePadding / 2),
                 )
             }
         }
 
         state.details != null -> TvDetailsContent(
             state = state,
-            onBack = onBack,
             onPlay = onPlay,
             onOpenDetails = onOpenDetails,
             onOpenPerson = onOpenPerson,
@@ -163,7 +145,6 @@ fun TvDetailsScreen(
             onSelectSeason = viewModel::selectSeason,
             onSelectEpisode = viewModel::selectEpisode,
             playFocus = playFocus,
-            backFocus = backFocus,
         )
     }
 }
@@ -171,7 +152,6 @@ fun TvDetailsScreen(
 @Composable
 private fun TvDetailsContent(
     state: DetailsUiState,
-    onBack: () -> Unit,
     onPlay: (PlayerRequest) -> Unit,
     onOpenDetails: (MediaSummary) -> Unit,
     onOpenPerson: (CastMember) -> Unit,
@@ -179,7 +159,6 @@ private fun TvDetailsContent(
     onSelectSeason: (Int) -> Unit,
     onSelectEpisode: (Int) -> Unit,
     playFocus: FocusRequester,
-    backFocus: FocusRequester,
 ) {
     val details = state.details!!
     val selectedEpisode = state.currentEpisode
@@ -187,14 +166,6 @@ private fun TvDetailsContent(
     val scope = rememberCoroutineScope()
     var pendingPlay by remember { mutableStateOf<PlayerRequest?>(null) }
 
-    // Focusing the Play button must not push the hero upwards. Keep the page
-    // pinned to the top when it first opens; the button is already on screen.
-    LaunchedEffect(Unit) {
-        delay(240)
-        if (listState.firstVisibleItemScrollOffset < 160) {
-            runCatching { listState.scrollToItem(0) }
-        }
-    }
     val watchLabel = when {
         details.mediaType == MediaType.TV && selectedEpisode != null -> "Play ${selectedEpisode.code}"
         details.mediaType == MediaType.TV -> "Play episode"
@@ -226,14 +197,6 @@ private fun TvDetailsContent(
                     },
                     onToggleWatchlist = onToggleWatchlist,
                     playFocus = playFocus,
-                    backFocus = backFocus,
-                    onPlayFocused = {
-                        if (listState.firstVisibleItemIndex > 0 ||
-                            listState.firstVisibleItemScrollOffset > 0
-                        ) {
-                            scope.launch { listState.scrollToItem(0) }
-                        }
-                    },
                     enabled = details.mediaType == MediaType.MOVIE || selectedEpisode != null,
                 )
             }
@@ -357,16 +320,6 @@ private fun TvDetailsContent(
             }
         }
 
-        BackButton(
-            onBack = onBack,
-            focusRequester = backFocus,
-            downFocusRequester = playFocus,
-            rightFocusRequester = playFocus,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(TvSizes.PagePadding / 2),
-        )
-
         pendingPlay?.let { request ->
             TvSourcePickerDialog(
                 mediaType = request.mediaType,
@@ -396,8 +349,6 @@ private fun TvDetailsHero(
     onWatch: () -> Unit,
     onToggleWatchlist: () -> Unit,
     playFocus: FocusRequester,
-    backFocus: FocusRequester,
-    onPlayFocused: () -> Unit,
     enabled: Boolean,
 ) {
     BoxWithConstraints(
@@ -549,16 +500,13 @@ private fun TvDetailsHero(
                         icon = Icons.Filled.PlayArrow,
                         primary = true,
                         focusRequester = playFocus,
-                        upFocusRequester = backFocus,
                         bringIntoViewOnFocus = false,
                         enabled = enabled,
-                        onFocusChange = { focused -> if (focused) onPlayFocused() },
                     )
                     TvActionButton(
                         label = if (watchlisted) "In My List" else "Add to My List",
                         onClick = onToggleWatchlist,
                         icon = if (watchlisted) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                        upFocusRequester = backFocus,
                     )
                 }
             }
@@ -737,25 +685,6 @@ private fun TvEpisodeCard(
             }
         }
     }
-}
-
-@Composable
-private fun BackButton(
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier,
-    focusRequester: FocusRequester? = null,
-    rightFocusRequester: FocusRequester? = null,
-    downFocusRequester: FocusRequester? = null,
-) {
-    TvIconButton(
-        icon = Icons.AutoMirrored.Filled.ArrowBack,
-        contentDescription = "Go back",
-        onClick = onBack,
-        modifier = modifier,
-        focusRequester = focusRequester,
-        rightFocusRequester = rightFocusRequester,
-        downFocusRequester = downFocusRequester,
-    )
 }
 
 @Composable

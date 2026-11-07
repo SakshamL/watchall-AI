@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -51,7 +49,6 @@ import java.time.LocalDate
 @Composable
 fun TvCollectionScreen(
     viewModel: CollectionViewModel,
-    onBack: () -> Unit,
     onOpenDetails: (MediaSummary) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -109,12 +106,6 @@ fun TvCollectionScreen(
                 .padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TvIconButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Go back",
-                onClick = onBack,
-            )
-            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 if (row.eyebrow.isNotBlank()) {
                     Text(

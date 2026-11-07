@@ -96,13 +96,30 @@ class WatchAllApi(
     fun normalizeBaseUrl(raw: String): String {
         val trimmed = raw.trim().trimEnd('/')
         if (trimmed.isBlank()) return preferences.currentSettings().defaultApiBaseUrl
-        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            trimmed
-        } else {
-            "http://$trimmed"
+        val withScheme = when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            isLocalAddress(trimmed) -> "http://$trimmed"
+            else -> "https://$trimmed"
         }
         return withScheme.toHttpUrlOrNull()?.toString()?.trimEnd('/')
             ?: withScheme.trimEnd('/')
+    }
+
+    private fun isLocalAddress(value: String): Boolean {
+        val host = value.substringBefore('/').substringBefore(':').lowercase()
+        return host == "localhost" ||
+            host == "127.0.0.1" ||
+            host == "10.0.2.2" ||
+            host.startsWith("192.168.") ||
+            host.startsWith("10.") ||
+            host.startsWith("172.16.") ||
+            host.startsWith("172.17.") ||
+            host.startsWith("172.18.") ||
+            host.startsWith("172.19.") ||
+            host.startsWith("172.2") ||
+            host.startsWith("172.30.") ||
+            host.startsWith("172.31.") ||
+            host.endsWith(".local")
     }
 
     fun baseUrl(): String = normalizeBaseUrl(preferences.currentSettings().apiBaseUrl)

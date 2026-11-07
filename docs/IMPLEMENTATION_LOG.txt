@@ -904,3 +904,42 @@ How it was verified:
 - The generated core BuildConfig contains DEFAULT_API_BASE_URL = https://watchall-media.vercel.app.
 - Both debug APKs rebuilt successfully.
 - No TV or emulator was available, so remote-control behaviour was not exercised on hardware.
+---
+
+Date: Sat Nov 07 2026
+Area: TV app full rework (remote focus, overlays, scrolling, Browse layout, server default)
+
+Issue/Feature:
+Remote focus got stuck on several TV screens, returning from a movie details page moved focus to the top navigation, Browse paging reset scroll/focus to the top, details focus motion stuttered, Browse wasted the top half of the screen on stacked filter rows, poster cards were clipped, and the compiled default server address needed to be the WatchAll server over HTTPS. A full TV-wide rework was requested rather than isolated patches.
+
+What was changed and how it works now:
+- Details, Person, Collection, and Player now open in a full-screen Dialog window. The tab underneath keeps its focused card, scroll position, and view models, so dismissing an overlay restores focus exactly where the viewer left it and D-pad focus cannot leak between layers. The global "focus nav on overlay close" effect was removed, and the tab BackHandler only runs when no overlay is open.
+- On-screen back buttons were removed from Details, Person, and Collection. Remote Back closes overlays (and the dialog handles back press) and returns to Home from a tab.
+- Browse was rebuilt as a compact page: one title/status row and a single horizontal filter strip (type, languages, genres). Paging is automatic infinite scroll that prefetches as the last rows come into view; the focusable "Load more" button and its focus-loss behaviour are gone. Filter changes are the only thing that resets scroll.
+- Details no longer forces scrollToItem(0) on open or on Play focus, and the back/play explicit focus links and onPlayFocused scroll reset were removed, so motion is smooth. The poster scale animation was shortened to 90 ms.
+- TvTopNav shrank to 48 dp with compact tabs and an explicit Down link to the page's primary focus target, with a safe fallback to normal spatial search.
+- TvPosterGrid gained minColumnWidth support and an optional first-item Up focus link; TvChip gained down/up/left/right links and a compact height option; TvPosterCard gained up/down/right links. TvSizes were compacted (PosterWidth 118, Continue 284x98, PagePadding 32).
+- The compiled default server is https://watchall-media.vercel.app. PreferencesStore and WatchAllApi now normalise bare public hostnames to HTTPS and keep HTTP only for local/LAN hosts. Legacy LAN development addresses are removed from SharedPreferences on every launch, and blank saved values are treated as unset.
+- Search keeps the keyboard hidden until OK opens editing, and hides it on dispose/tab exit. Settings shows the default address, uses an HTTPS placeholder, and keeps Save & test / Test connection enabled to avoid focus loss.
+- Watched history (mobile + TV) and the VidNest relay fallback were preserved.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/prefs/PreferencesStore.kt
+native/core/src/main/java/com/watchall/core/net/WatchAllApi.kt
+native/tv/src/main/java/com/watchall/tv/ui/TvApp.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvCollectionScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPersonScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSearchScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvSettingsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
+native/docs/BUILD_AND_INSTALL.md
+
+How it was verified:
+- :mobile:compileDebugKotlin and :tv:compileDebugKotlin completed successfully offline.
+- :mobile:assembleDebug and :tv:assembleDebug completed successfully offline.
+- No Android TV device or emulator was available, so remote-control focus and frame-rate behaviour could not be exercised on hardware; correctness was inferred from code review and successful builds.
+

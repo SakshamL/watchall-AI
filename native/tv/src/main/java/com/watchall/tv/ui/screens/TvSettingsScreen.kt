@@ -83,6 +83,13 @@ fun TvSettingsScreen(viewModel: SettingsViewModel) {
             subtitle = "Connect WatchAll to your private server.",
         )
 
+        Text(
+            text = "Default address: ${state.settings.defaultApiBaseUrl}",
+            style = MaterialTheme.typography.labelSmall,
+            color = TvColors.TextMuted,
+        )
+        Spacer(Modifier.height(10.dp))
+
         SettingsPanel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
@@ -117,7 +124,7 @@ fun TvSettingsScreen(viewModel: SettingsViewModel) {
                     .fillMaxWidth(0.62f)
                     .focusRequester(addressFocus),
                 label = { Text("Server address") },
-                placeholder = { Text("http://192.168.1.4:3001") },
+                placeholder = { Text("https://watchall-media.vercel.app") },
                 singleLine = true,
                 shape = RoundedCornerShape(11.dp),
                 textStyle = MaterialTheme.typography.bodyMedium,
@@ -154,7 +161,7 @@ fun TvSettingsScreen(viewModel: SettingsViewModel) {
                     },
                     primary = true,
                     focusRequester = saveFocus,
-                    enabled = !state.testing,
+                    enabled = true,
                 )
                 TvActionButton(
                     label = "Test connection",
@@ -164,7 +171,7 @@ fun TvSettingsScreen(viewModel: SettingsViewModel) {
                         runCatching { testFocus.requestFocus() }
                     },
                     focusRequester = testFocus,
-                    enabled = !state.testing,
+                    enabled = true,
                 )
                 if (!state.settings.usesDefaultServer) {
                     TvChip(

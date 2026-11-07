@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -45,8 +46,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.watchall.core.WatchAllGraph
 import com.watchall.core.data.HomeRow
 import com.watchall.core.data.MediaType
@@ -122,7 +130,6 @@ fun WatchAllTvApp(graph: WatchAllGraph) {
     fun goBack() {
         val removed = if (overlays.isNotEmpty()) overlays.removeAt(overlays.lastIndex) else null
         if (removed is TvOverlay.Player) homeViewModel.refreshContinueWatching()
-        if (removed == null && tab != TvTab.HOME) tab = TvTab.HOME
     }
 
     fun openDetails(mediaId: Int, mediaType: MediaType) {
@@ -144,151 +151,190 @@ fun WatchAllTvApp(graph: WatchAllGraph) {
         }
     }
 
-    BackHandler(enabled = overlays.isNotEmpty() || tab != TvTab.HOME) {
-        goBack()
+    // Remote Back closes the top overlay (handled by the dialog) or returns to
+    // Home. It never moves focus between the nav bar and the page.
+    BackHandler(enabled = overlays.isEmpty() && tab != TvTab.HOME) {
+        tab = TvTab.HOME
     }
 
-    // Whenever the tab bar becomes the visible layer (first launch, tab change,
-    // or returning from a details/player overlay) put focus back on its selected
-    // item. Down from there jumps straight into the screen's primary action.
-    LaunchedEffect(tab, overlays.isEmpty()) {
-        if (overlays.isEmpty()) {
-            delay(70)
-            runCatching { navFocusRequesters.getValue(tab).requestFocus() }
-        }
+    // Only a real tab change moves focus to the nav bar. Overlays live in their
+    // own dialog window, so the tab keeps its focus and scroll position while a
+    // details page is open. Closing details therefore returns focus to the exact
+    // card that opened it instead of jumping to the top of the app.
+    LaunchedEffect(tab) {
+        delay(60)
+        runCatching { navFocusRequesters.getValue(tab).requestFocus() }
     }
 
-    when (val overlay = overlays.lastOrNull()) {
-        is TvOverlay.Details -> {
-            val detailsViewModel = watchAllTvViewModel<DetailsViewModel>(
-                key = "tv-details-${overlay.mediaType.apiValue}-${overlay.mediaId}",
-            ) {
-                DetailsViewModel(graph.repository, overlay.mediaId, overlay.mediaType)
-            }
-            TvDetailsScreen(
-                viewModel = detailsViewModel,
-                onBack = ::goBack,
-                onPlay = ::openPlayer,
-                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-                onOpenPerson = { cast ->
-                    overlays.add(
-                        TvOverlay.Person(
-                            personId = cast.id,
-                            name = cast.name,
-                            profilePath = cast.profilePath,
-                        ),
-                    )
-                },
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TvColors.Ink),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            TvTopNav(
+                selected = tab,
+                onSelect = { tab = it },
+                focusRequesters = navFocusRequesters,
+                contentFocusRequester = contentFocusRequesters.getValue(tab),
             )
-        }
-
-        is TvOverlay.Person -> {
-            val personViewModel = watchAllTvViewModel<PersonViewModel>(
-                key = "tv-person-${overlay.personId}",
-            ) {
-                PersonViewModel(
-                    repository = graph.repository,
-                    personId = overlay.personId,
-                    name = overlay.name,
-                    profilePath = overlay.profilePath,
-                )
-            }
-            TvPersonScreen(
-                viewModel = personViewModel,
-                onBack = ::goBack,
-                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-            )
-        }
-
-        is TvOverlay.Collection -> {
-            val collectionViewModel = watchAllTvViewModel<CollectionViewModel>(
-                key = "tv-collection-${overlay.row.id}",
-            ) {
-                CollectionViewModel(graph.repository, overlay.row)
-            }
-            TvCollectionScreen(
-                viewModel = collectionViewModel,
-                onBack = ::goBack,
-                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-            )
-        }
-
-        is TvOverlay.Player -> {
-            val playerViewModel = watchAllTvViewModel<PlayerViewModel>(
-                key = "tv-player-${overlay.sessionId}",
-            ) {
-                PlayerViewModel(graph.repository, overlay.request)
-            }
-            TvPlayerScreen(
-                viewModel = playerViewModel,
-                onBack = ::goBack,
-            )
-        }
-
-        null -> {
-            Column(
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(TvColors.Ink),
-            ) {
-                TvTopNav(
-                    selected = tab,
-                    onSelect = { tab = it },
-                    focusRequesters = navFocusRequesters,
-                    contentFocusRequester = contentFocusRequesters.getValue(tab),
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(TvColors.DeepInk, TvColors.Ink),
-                            ),
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(TvColors.DeepInk, TvColors.Ink),
                         ),
+                    ),
+            ) {
+                CompositionLocalProvider(
+                    LocalTvContentFocusRequester provides contentFocusRequesters.getValue(tab),
+                    LocalTvNavFocusRequester provides navFocusRequesters.getValue(tab),
                 ) {
-                    CompositionLocalProvider(
-                        LocalTvContentFocusRequester provides contentFocusRequesters.getValue(tab),
-                        LocalTvNavFocusRequester provides navFocusRequesters.getValue(tab),
-                    ) {
-                        tabStateHolder.SaveableStateProvider(tab.name) {
-                            when (tab) {
-                                TvTab.HOME -> TvHomeScreen(
-                                    viewModel = homeViewModel,
-                                    onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-                                    onPlay = ::openPlayer,
-                                    onResume = ::resume,
-                                    onViewMore = { row -> overlays.add(TvOverlay.Collection(row)) },
-                                )
+                    tabStateHolder.SaveableStateProvider(tab.name) {
+                        when (tab) {
+                            TvTab.HOME -> TvHomeScreen(
+                                viewModel = homeViewModel,
+                                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                                onPlay = ::openPlayer,
+                                onResume = ::resume,
+                                onViewMore = { row -> overlays.add(TvOverlay.Collection(row)) },
+                            )
 
-                                TvTab.BROWSE -> TvBrowseScreen(
-                                    graph = graph,
-                                    onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-                                )
+                            TvTab.BROWSE -> TvBrowseScreen(
+                                graph = graph,
+                                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                            )
 
-                                TvTab.SEARCH -> TvSearchScreen(
-                                    viewModel = searchViewModel,
-                                    onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-                                )
+                            TvTab.SEARCH -> TvSearchScreen(
+                                viewModel = searchViewModel,
+                                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                            )
 
-                                TvTab.LIBRARY -> TvLibraryScreen(
-                                    repository = graph.repository,
-                                    onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
-                                    onPlay = ::openPlayer,
-                                    onBrowse = { tab = TvTab.BROWSE },
-                                )
+                            TvTab.LIBRARY -> TvLibraryScreen(
+                                repository = graph.repository,
+                                onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                                onPlay = ::openPlayer,
+                                onBrowse = { tab = TvTab.BROWSE },
+                            )
 
-                                TvTab.SETTINGS -> {
-                                    val settingsViewModel = watchAllTvViewModel<SettingsViewModel> {
-                                        SettingsViewModel(graph.repository)
-                                    }
-                                    TvSettingsScreen(viewModel = settingsViewModel)
+                            TvTab.SETTINGS -> {
+                                val settingsViewModel = watchAllTvViewModel<SettingsViewModel> {
+                                    SettingsViewModel(graph.repository)
                                 }
+                                TvSettingsScreen(viewModel = settingsViewModel)
                             }
                         }
                     }
                 }
             }
+        }
+
+        when (val overlay = overlays.lastOrNull()) {
+            null -> Unit
+
+            is TvOverlay.Details -> {
+                val detailsViewModel = watchAllTvViewModel<DetailsViewModel>(
+                    key = "tv-details-${overlay.mediaType.apiValue}-${overlay.mediaId}",
+                ) {
+                    DetailsViewModel(graph.repository, overlay.mediaId, overlay.mediaType)
+                }
+                FullScreenOverlay(onDismiss = ::goBack) {
+                    TvDetailsScreen(
+                        viewModel = detailsViewModel,
+                        onPlay = ::openPlayer,
+                        onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                        onOpenPerson = { cast ->
+                            overlays.add(
+                                TvOverlay.Person(
+                                    personId = cast.id,
+                                    name = cast.name,
+                                    profilePath = cast.profilePath,
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
+
+            is TvOverlay.Person -> {
+                val personViewModel = watchAllTvViewModel<PersonViewModel>(
+                    key = "tv-person-${overlay.personId}",
+                ) {
+                    PersonViewModel(
+                        repository = graph.repository,
+                        personId = overlay.personId,
+                        name = overlay.name,
+                        profilePath = overlay.profilePath,
+                    )
+                }
+                FullScreenOverlay(onDismiss = ::goBack) {
+                    TvPersonScreen(
+                        viewModel = personViewModel,
+                        onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                    )
+                }
+            }
+
+            is TvOverlay.Collection -> {
+                val collectionViewModel = watchAllTvViewModel<CollectionViewModel>(
+                    key = "tv-collection-${overlay.row.id}",
+                ) {
+                    CollectionViewModel(graph.repository, overlay.row)
+                }
+                FullScreenOverlay(onDismiss = ::goBack) {
+                    TvCollectionScreen(
+                        viewModel = collectionViewModel,
+                        onOpenDetails = { media -> openDetails(media.id, media.mediaType) },
+                    )
+                }
+            }
+
+            is TvOverlay.Player -> {
+                val playerViewModel = watchAllTvViewModel<PlayerViewModel>(
+                    key = "tv-player-${overlay.sessionId}",
+                ) {
+                    PlayerViewModel(graph.repository, overlay.request)
+                }
+                FullScreenOverlay(onDismiss = ::goBack) {
+                    TvPlayerScreen(
+                        viewModel = playerViewModel,
+                        onBack = ::goBack,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A full-screen dialog window for details, collections, people, and playback.
+ *
+ * A separate window gives the overlay its own focus tree. The tab underneath
+ * keeps its focused card, scroll state, and view models alive, so dismissing
+ * the overlay restores focus exactly where the viewer left it. It also stops
+ * D-pad focus from leaking between the overlay and the page behind it.
+ */
+@Composable
+private fun FullScreenOverlay(
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+        ),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = TvColors.Ink,
+        ) {
+            content()
         }
     }
 }
@@ -304,25 +350,37 @@ private fun TvTopNav(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(58.dp)
+                .height(48.dp)
                 .background(TvColors.DeepInk)
-                .padding(horizontal = 32.dp),
+                .padding(horizontal = 30.dp)
+                // Explicit Down handling is deterministic: the selected tab
+                // always jumps to the page's primary focus target. If that
+                // target is not attached yet (a first-load skeleton, for
+                // example), the event falls through to normal spatial search
+                // instead of being swallowed.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        runCatching { contentFocusRequester.requestFocus() }.isSuccess
+                    } else {
+                        false
+                    }
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TvBrand()
-            Spacer(Modifier.width(20.dp))
+            Spacer(Modifier.width(16.dp))
             Box(
                 Modifier
                     .width(1.dp)
                     .height(18.dp)
                     .background(Color.White.copy(alpha = 0.12f)),
             )
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
             TvTab.entries.forEach { item ->
                 val isSelected = item == selected
                 TvFocusable(
                     onClick = { onSelect(item) },
-                    modifier = Modifier.height(36.dp),
+                    modifier = Modifier.height(32.dp),
                     shape = RoundedCornerShape(8.dp),
                     focusRequester = focusRequesters.getValue(item),
                     downFocusRequester = contentFocusRequester,
@@ -337,21 +395,20 @@ private fun TvTopNav(
                     Row(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             imageVector = if (isSelected) item.selectedIcon else item.icon,
                             contentDescription = null,
                             tint = if (isSelected) TvColors.Cyan else TvColors.TextMuted,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
                             text = item.label,
                             style = MaterialTheme.typography.labelMedium,
                             color = if (isSelected) TvColors.Cyan else TvColors.TextMuted,
-                            fontWeight = if (isSelected) MaterialTheme.typography.labelLarge.fontWeight else null,
                         )
                     }
                 }

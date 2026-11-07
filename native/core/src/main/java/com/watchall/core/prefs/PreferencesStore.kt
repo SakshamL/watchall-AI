@@ -38,23 +38,19 @@ class PreferencesStore(context: Context) {
      * Early sideload builds shipped with a LAN/emulator address compiled in as
      * the "default". Anyone who installed one of those builds keeps that address
      * in SharedPreferences, so a new build with the WatchAll server default
-     * would still point at a machine on the local network. Move those known
-     * development addresses over to the compiled default once.
+     * would still point at a machine on the local network.
+     *
+     * This migration deliberately runs every launch instead of using a one-shot
+     * flag. An older build could have set that flag while the compiled default
+     * was still a LAN address, which would leave an upgraded install pointing at
+     * a dead development server forever. These exact addresses are only ever
+     * development defaults, never a real user choice, so removing them is safe.
      */
     private fun migrateLegacyServerAddress(stored: String?): String? {
-        if (prefs.getBoolean(KEY_DEFAULT_SERVER_MIGRATED, false)) return stored
-        val legacy = setOf(
-            "http://192.168.1.4:3001",
-            "http://10.0.2.2:3001",
-            "http://localhost:3001",
-            "http://127.0.0.1:3001",
-        )
         val normalized = stored?.trim()?.trimEnd('/')
-        val shouldMigrate = normalized != null &&
-            normalized in legacy &&
-            defaultApi !in legacy
-        prefs.edit().putBoolean(KEY_DEFAULT_SERVER_MIGRATED, true).apply()
-        if (!shouldMigrate) return stored
+        if (normalized.isNullOrBlank()) return null
+        if (normalized !in LEGACY_SERVER_ADDRESSES) return stored
+        if (defaultApi in LEGACY_SERVER_ADDRESSES) return stored
         prefs.edit().remove(KEY_API_BASE_URL).apply()
         return null
     }
@@ -62,12 +58,31 @@ class PreferencesStore(context: Context) {
     fun normalizeBaseUrl(raw: String): String {
         val trimmed = raw.trim().trimEnd('/')
         if (trimmed.isBlank()) return defaultApi
-        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            trimmed
-        } else {
-            "http://$trimmed"
+        val withScheme = when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            // A bare hostname is almost always a public server. Keep plain HTTP
+            // only for addresses that can physically be on the local network.
+            isLocalAddress(trimmed) -> "http://$trimmed"
+            else -> "https://$trimmed"
         }
         return withScheme.toHttpUrlOrNull()?.toString()?.trimEnd('/') ?: withScheme
+    }
+
+    private fun isLocalAddress(value: String): Boolean {
+        val host = value.substringBefore('/').substringBefore(':').lowercase()
+        return host == "localhost" ||
+            host == "127.0.0.1" ||
+            host == "10.0.2.2" ||
+            host.startsWith("192.168.") ||
+            host.startsWith("10.") ||
+            host.startsWith("172.16.") ||
+            host.startsWith("172.17.") ||
+            host.startsWith("172.18.") ||
+            host.startsWith("172.19.") ||
+            host.startsWith("172.2") ||
+            host.startsWith("172.30.") ||
+            host.startsWith("172.31.") ||
+            host.endsWith(".local")
     }
 
     fun updateApiBaseUrl(raw: String): AppSettings {
@@ -262,7 +277,6 @@ class PreferencesStore(context: Context) {
 
     companion object {
         private const val KEY_API_BASE_URL = "api_base_url"
-        private const val KEY_DEFAULT_SERVER_MIGRATED = "api_default_server_migrated"
         private const val KEY_RESUME = "resume_entries"
         private const val KEY_WATCHLIST = "watchlist"
         private const val KEY_WATCHED = "watched_entries"
@@ -270,5 +284,11 @@ class PreferencesStore(context: Context) {
         private const val MIN_RESUME_MS = 10_000L
         private const val MAX_RESUME_ENTRIES = 30
         private const val MAX_WATCHED_ENTRIES = 200
+        private val LEGACY_SERVER_ADDRESSES = setOf(
+            "http://192.168.1.4:3001",
+            "http://10.0.2.2:3001",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        )
     }
 }

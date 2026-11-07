@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -60,7 +59,6 @@ private enum class PersonFilter(val label: String) {
 @Composable
 fun TvPersonScreen(
     viewModel: PersonViewModel,
-    onBack: () -> Unit,
     onOpenDetails: (MediaSummary) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -109,12 +107,6 @@ fun TvPersonScreen(
                 .padding(bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TvIconButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Go back",
-                onClick = onBack,
-            )
-            Spacer(Modifier.width(16.dp))
             Box(
                 modifier = Modifier
                     .size(82.dp)
