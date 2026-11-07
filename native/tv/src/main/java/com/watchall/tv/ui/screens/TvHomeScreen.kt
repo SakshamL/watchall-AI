@@ -175,7 +175,6 @@ fun TvHomeScreen(
                                     items = row.items,
                                     onOpen = onOpenDetails,
                                     ranked = row.ranked,
-                                    landscape = index == 0 || row.ranked,
                                     firstFocusRequester = if (index == 0) firstRowFocus else null,
                                 )
                             }

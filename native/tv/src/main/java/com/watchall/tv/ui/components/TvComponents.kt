@@ -161,7 +161,7 @@ fun TvFocusable(
     rightFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = true,
+    bringIntoViewOnFocus: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -181,7 +181,6 @@ fun TvFocusable(
 
     Box(
         modifier = modifier
-            .zIndex(if (focused) 2f else 0f)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -261,7 +260,7 @@ fun TvPosterCard(
     rightFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = true,
+    bringIntoViewOnFocus: Boolean = false,
 ) {
     val columnModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
     Column(modifier = columnModifier) {
@@ -284,6 +283,7 @@ fun TvPosterCard(
                 TvRemoteImage(
                     path = media.posterPath,
                     contentDescription = media.displayTitle,
+                    size = "w342",
                     modifier = Modifier.fillMaxSize(),
                 )
                 Box(
@@ -377,7 +377,7 @@ fun TvContinueCard(
     focusRequester: FocusRequester? = null,
     onFocusChange: ((Boolean) -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = true,
+    bringIntoViewOnFocus: Boolean = false,
 ) {
     TvFocusable(
         onClick = onClick,
@@ -665,7 +665,7 @@ fun TvActionButton(
     rightFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = true,
+    bringIntoViewOnFocus: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val primaryBrush = Brush.linearGradient(
@@ -1369,7 +1369,7 @@ fun TvLandscapeCard(
                 TvRemoteImage(
                     path = media.backdropPath ?: media.posterPath,
                     contentDescription = media.displayTitle,
-                    size = "w780",
+                    size = "w500",
                     modifier = Modifier.fillMaxSize(),
                 )
                 Box(
@@ -1411,7 +1411,7 @@ fun TvLandscapeCard(
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" · "),
+            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" ï¿½ "),
             style = MaterialTheme.typography.labelSmall,
             color = TvColors.TextMuted,
             maxLines = 1,
