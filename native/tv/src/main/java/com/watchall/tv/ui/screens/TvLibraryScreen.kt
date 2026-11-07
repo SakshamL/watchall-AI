@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +29,7 @@ import com.watchall.tv.ui.components.TvPosterGrid
 import com.watchall.tv.ui.components.TvSectionHeader
 import com.watchall.tv.ui.components.TvSizes
 import com.watchall.tv.ui.components.TvWatchedRow
+import kotlinx.coroutines.delay
 
 @Composable
 fun TvLibraryScreen(
@@ -41,6 +43,15 @@ fun TvLibraryScreen(
     val watched = remember(version) { repository.watched() }
     val saved = remember(version) { repository.watchlist().map { it.media } }
     val contentFocus = LocalTvContentFocusRequester.current
+
+    // After removing a Watched title the focused card disappears. Move focus
+    // back to the first card in the page instead of leaving the remote lost.
+    LaunchedEffect(version) {
+        if (version > 0 && contentFocus != null) {
+            delay(90)
+            runCatching { contentFocus.requestFocus() }
+        }
+    }
 
     if (resume.isEmpty() && watched.isEmpty() && saved.isEmpty()) {
         Column(
