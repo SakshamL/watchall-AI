@@ -1063,3 +1063,28 @@ native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
 
 How it was verified:
 - :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
+---
+
+Date: Sat Nov 07 2026
+Area: VegaMovies server fix, TV card titles/viewport, scroll, theme
+
+Issue/Feature:
+VegaMovies failed with "A numeric TMDB id is required." even for valid numeric ids. Card titles appeared inside posters and bottom cards were cut off. Scroll-to-top was instant. Default server and compactness already handled.
+
+What was changed and how it works now:
+- server/index.js VegaMovies validation regex was `/^\\d{1,10}$/` (matching a literal backslash) instead of `/^\\d{1,10}$/`. Fixed to `/^\\d{1,10}$/` so numeric TMDB ids pass. Redeploy Vercel to apply.
+- TvPosterCard restructured so focusable wraps poster+title (title below poster), and bringIntoView covers the whole card.
+- Lazy grids/lists given 40 dp bottom content padding so focused cards are not clipped at viewport bottom.
+- Home/Details scroll-to-top changed to animateScrollToItem for smooth scrolling.
+- Navy-magenta theme and white 2 dp focus border retained.
+
+Files affected:
+server/index.js
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+
+How it was verified:
+- :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
+- Server change not deployed (Vercel login required); user should run `vercel --prod` after login.
