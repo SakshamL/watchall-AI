@@ -967,3 +967,28 @@ How it was verified:
 - :core:compileDebugKotlin and :tv:compileDebugKotlin completed successfully offline.
 - :mobile:assembleDebug and :tv:assembleDebug completed successfully offline.
 - No TV device or emulator was available, so the frame-rate and cache behaviour were not exercised on hardware.
+---
+
+Date: Sat Nov 07 2026
+Area: TV UI revert and low-RAM smoothness
+
+Issue/Feature:
+The user wanted the original cyan UI back (not the red SmartTube theme) while keeping the app smooth, quick, and optimized on a 1 GB RAM device. Focus shifts and scrolls were stuttering.
+
+What was changed and how it works now:
+- Restored the original cyan color palette for TvColors and the player accent colors.
+- Restored the original Home, Browse, and Library layouts (poster cards and poster grid) instead of the landscape redesign.
+- Removed zIndex from TvFocusable to cut compositing overhead, disabled the redundant bringIntoView call on focus (Compose lazy lists already keep focused items visible), reduced image fetch sizes (w342 for posters, w500 for landscape), and shortened the focus scale animation to 60 ms.
+- Kept the disk-backed OkHttp cache, manifest hardwareAccelerated/largeHeap flags, and dialog-based overlay focus isolation from earlier passes.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/theme/TvTheme.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvLibraryScreen.kt
+
+How it was verified:
+- :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
+- No 1 GB TV device was available, so stutter reduction could not be measured on hardware.
