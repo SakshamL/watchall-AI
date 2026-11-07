@@ -943,3 +943,27 @@ How it was verified:
 - :mobile:assembleDebug and :tv:assembleDebug completed successfully offline.
 - No Android TV device or emulator was available, so remote-control focus and frame-rate behaviour could not be exercised on hardware; correctness was inferred from code review and successful builds.
 
+---
+
+Date: Sat Nov 07 2026
+Area: TV performance and VegaMovies TMDB id
+
+Issue/Feature:
+The TV app still lagged on low-end boxes, and VegaMovies playback could fail with "A numeric TMDB id is required." because the player route could pass a non-numeric id. SmartTube (stable APK) was studied for its TV optimisations: hardware acceleration, large heap, disk-backed HTTP cache, Glide image caching, Cronet networking, Leanback focus patterns.
+
+What was changed and how it works now:
+- AndroidManifest for the TV app now enables hardwareAccelerated and largeHeap, matching SmartTube's manifest flags that keep rendering and memory pressure low on TV boxes.
+- OkHttp (both TMDB and backend clients) now uses a disk-backed Cache (32 MB / 128 MB) stored in the app cache directory, so repeated catalogue, details, and extraction requests are served locally and the network load drops sharply.
+- The web player now derives a numeric TMDB id from the route id before calling movie details and the extraction API, so VegaMovies (and other sources) always receive a numeric tmdb parameter.
+- The existing Compose focus, overlay, and paging optimisations from the previous rework remain in place.
+
+Files affected:
+native/tv/src/main/AndroidManifest.xml
+native/core/src/main/java/com/watchall/core/net/Http.kt
+native/core/src/main/java/com/watchall/core/WatchAllGraph.kt
+src/Pages/VideoPlayer.jsx
+
+How it was verified:
+- :core:compileDebugKotlin and :tv:compileDebugKotlin completed successfully offline.
+- :mobile:assembleDebug and :tv:assembleDebug completed successfully offline.
+- No TV device or emulator was available, so the frame-rate and cache behaviour were not exercised on hardware.
