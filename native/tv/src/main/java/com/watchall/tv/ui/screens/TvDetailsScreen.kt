@@ -197,6 +197,7 @@ private fun TvDetailsContent(
                     },
                     onToggleWatchlist = onToggleWatchlist,
                     playFocus = playFocus,
+                    onPlayFocused = { scope.launch { listState.scrollToItem(0) } },
                     enabled = details.mediaType == MediaType.MOVIE || selectedEpisode != null,
                 )
             }
@@ -349,6 +350,7 @@ private fun TvDetailsHero(
     onWatch: () -> Unit,
     onToggleWatchlist: () -> Unit,
     playFocus: FocusRequester,
+    onPlayFocused: () -> Unit = {},
     enabled: Boolean,
 ) {
     BoxWithConstraints(
@@ -502,6 +504,7 @@ private fun TvDetailsHero(
                         focusRequester = playFocus,
                         bringIntoViewOnFocus = false,
                         enabled = enabled,
+                        onFocusChange = { if (it) onPlayFocused() },
                     )
                     TvActionButton(
                         label = if (watchlisted) "In My List" else "Add to My List",

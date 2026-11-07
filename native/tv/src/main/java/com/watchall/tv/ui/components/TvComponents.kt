@@ -154,7 +154,7 @@ fun TvFocusable(
     containerBrush: Brush? = null,
     focusedContainerBrush: Brush? = null,
     borderColor: Color = Color.White.copy(alpha = 0.09f),
-    focusBorderColor: Color = TvColors.Amber,
+    focusBorderColor: Color = Color.White,
     onFocusChange: ((Boolean) -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
@@ -217,7 +217,7 @@ fun TvFocusable(
                 },
             )
             .border(
-                width = if (focused) 4.dp else 1.dp,
+                width = if (focused) 2.dp else 1.dp,
                 color = if (focused) focusBorderColor else borderColor,
                 shape = shape,
             )
@@ -263,29 +263,23 @@ fun TvPosterCard(
     bringIntoViewOnFocus: Boolean = false,
 ) {
     val columnModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
-    TvFocusable(
-        onClick = onClick,
-        modifier = columnModifier,
-        shape = RoundedCornerShape(10.dp),
-        focusRequester = focusRequester,
-        scaleOnFocus = 1.05f,
-        onFocusChange = onFocusChange,
-        leftFocusRequester = leftFocusRequester,
-        rightFocusRequester = rightFocusRequester,
-        upFocusRequester = upFocusRequester,
-        downFocusRequester = downFocusRequester,
-        bringIntoViewOnFocus = bringIntoViewOnFocus,
-        containerColor = Color.Transparent,
-        focusedContainerColor = Color.Transparent,
-        borderColor = Color.Transparent,
-        focusBorderColor = TvColors.Amber,
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(2f / 3f),
-            ) {
+    Column(modifier = columnModifier) {
+        TvFocusable(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f),
+            shape = RoundedCornerShape(10.dp),
+            focusRequester = focusRequester,
+            scaleOnFocus = 1.05f,
+            onFocusChange = onFocusChange,
+            leftFocusRequester = leftFocusRequester,
+            rightFocusRequester = rightFocusRequester,
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            bringIntoViewOnFocus = bringIntoViewOnFocus,
+        ) {
+            Box(Modifier.fillMaxSize()) {
                 TvRemoteImage(
                     path = media.posterPath,
                     contentDescription = media.displayTitle,
@@ -340,7 +334,7 @@ fun TvPosterCard(
                         Text(
                             text = "TOP 10",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, lineHeight = 10.sp),
-                            color = TvColors.Cyan,
+                            color = TvColors.Amber,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp,
                         )
@@ -356,10 +350,9 @@ fun TvPosterCard(
                     }
                 }
             }
-        }
-        Spacer(Modifier.height(7.dp))
-        Text(
-            text = media.displayTitle,
+            Spacer(Modifier.height(7.dp))
+            Text(
+                text = media.displayTitle,
             style = MaterialTheme.typography.labelLarge,
             color = TvColors.Text,
             maxLines = 1,
@@ -367,11 +360,12 @@ fun TvPosterCard(
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" · "),
+            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" � "),
             style = MaterialTheme.typography.labelSmall,
             color = TvColors.TextMuted,
             maxLines = 1,
         )
+        }
     }
 }
 

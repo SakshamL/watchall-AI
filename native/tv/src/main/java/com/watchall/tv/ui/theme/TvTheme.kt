@@ -14,14 +14,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object TvColors {
-    val Ink = Color(0xFF08090C)
-    val DeepInk = Color(0xFF0C0D12)
-    val Surface = Color(0xFF111318)
-    val Card = Color(0xFF191B22)
-    val CardHigh = Color(0xFF262932)
-    val Cyan = Color(0xFF64E8FF)
-    val Teal = Color(0xFF3BD9C5)
-    val Violet = Color(0xFF8C7CFF)
+    val Ink = Color(0xFF0A0C14)
+    val DeepInk = Color(0xFF06080F)
+    val Surface = Color(0xFF0F121C)
+    val Card = Color(0xFF161A26)
+    val CardHigh = Color(0xFF1F2433)
+    val Cyan = Color(0xFF7C5CFC)
+    val Teal = Color(0xFF5B8CFF)
+    val Violet = Color(0xFF9D7BFF)
     val Coral = Color(0xFFFF7185)
     val Amber = Color(0xFFFFC65C)
     val Text = Color(0xFFF7F8FA)

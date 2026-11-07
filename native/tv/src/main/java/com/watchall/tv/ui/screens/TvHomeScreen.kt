@@ -116,6 +116,7 @@ fun TvHomeScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(
                     start = TvSizes.PagePadding,
                     end = TvSizes.PagePadding,
@@ -136,6 +137,7 @@ fun TvHomeScreen(
                                 }
                             },
                             playFocus = heroPlayFocus,
+                            onPlayFocused = { scope.launch { listState.animateScrollToItem(0) } },
                         )
                     }
                 }
@@ -221,6 +223,7 @@ private fun TvHero(
     onOpenDetails: () -> Unit,
     onPlay: () -> Unit,
     playFocus: androidx.compose.ui.focus.FocusRequester?,
+    onPlayFocused: () -> Unit = {},
 ) {
     // A 16:9 hero at 320 dp leaves room for the first row to peek in, which is
     // the standard 10-foot pattern used by Prime Video and Netflix.
@@ -327,6 +330,7 @@ private fun TvHero(
                     icon = Icons.Filled.PlayArrow,
                     primary = true,
                     focusRequester = playFocus,
+                    onFocusChange = { if (it) onPlayFocused() },
                 )
                 TvActionButton(
                     label = "More info",
