@@ -168,7 +168,7 @@ fun TvFocusable(
     val interactionSource = remember { MutableInteractionSource() }
     val scale by animateFloatAsState(
         targetValue = if (focused) scaleOnFocus else 1f,
-        animationSpec = tween(durationMillis = 90, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
         label = "tv-focus-scale",
     )
     val bringIntoView = remember { BringIntoViewRequester() }
