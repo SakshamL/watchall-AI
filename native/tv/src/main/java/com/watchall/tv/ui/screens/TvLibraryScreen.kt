@@ -138,6 +138,7 @@ fun TvLibraryScreen(
                 onOpen = onOpenDetails,
                 modifier = Modifier.weight(1f),
                 firstFocusRequester = if (resume.isEmpty() && watched.isEmpty()) contentFocus else null,
+                landscape = true,
             )
         } else {
             Spacer(Modifier.weight(1f))
