@@ -113,10 +113,10 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 private object PlayerColors {
-    val Accent = Color(0xFF5B4DFF)
-    val Accent2 = Color(0xFF2EC4B6)
-    val Focus = Color(0xFF72F1E6)
-    val Danger = Color(0xFFFF6B81)
+    val Accent = Color(0xFFFF3B3B)
+    val Accent2 = Color(0xFFFF5A5A)
+    val Focus = Color(0xFFFF6B6B)
+    val Danger = Color(0xFFFF4E4E)
 }
 
 private enum class TvPlayerSheet {
