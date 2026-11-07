@@ -645,7 +645,7 @@ app.get("/api/extract", async (req, res) => {
   }
 
   if (source === "vegamovies") {
-    if (!/^\\d{1,10}$/.test(String(tmdb))) {
+    if (!/^\d{1,10}$/.test(String(tmdb))) {
       return res.status(400).json({ error: "A numeric TMDB id is required." });
     }
     const cacheKey = `vegamovies:${type}:${tmdb}`;
