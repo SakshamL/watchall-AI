@@ -154,7 +154,7 @@ fun TvFocusable(
     containerBrush: Brush? = null,
     focusedContainerBrush: Brush? = null,
     borderColor: Color = Color.White.copy(alpha = 0.09f),
-    focusBorderColor: Color = TvColors.Cyan,
+    focusBorderColor: Color = TvColors.Amber,
     onFocusChange: ((Boolean) -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
@@ -217,7 +217,7 @@ fun TvFocusable(
                 },
             )
             .border(
-                width = if (focused) 3.dp else 1.dp,
+                width = if (focused) 4.dp else 1.dp,
                 color = if (focused) focusBorderColor else borderColor,
                 shape = shape,
             )
@@ -278,7 +278,7 @@ fun TvPosterCard(
         containerColor = Color.Transparent,
         focusedContainerColor = Color.Transparent,
         borderColor = Color.Transparent,
-        focusBorderColor = TvColors.Cyan,
+        focusBorderColor = TvColors.Amber,
     ) {
         Column {
             Box(
