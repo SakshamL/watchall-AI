@@ -254,34 +254,26 @@ fun TvCollectionScreen(
                     modifier = Modifier.weight(1f),
                     state = gridState,
                     firstFocusRequester = firstItemFocus,
-                    footer = if (state.hasMore) {
+                    footer = if (state.loadingMore) {
                         {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 10.dp),
+                                    .padding(top = 12.dp, bottom = 4.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                if (state.loadingMore) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        color = TvColors.Cyan,
-                                        strokeWidth = 2.dp,
-                                    )
-                                    Spacer(Modifier.size(9.dp))
-                                    Text(
-                                        text = "Loading more…",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = TvColors.TextMuted,
-                                    )
-                                } else {
-                                    TvActionButton(
-                                        label = "Load more",
-                                        onClick = viewModel::loadMore,
-                                        primary = true,
-                                    )
-                                }
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = TvColors.Cyan,
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.size(9.dp))
+                                Text(
+                                    text = "Loading more…",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TvColors.TextMuted,
+                                )
                             }
                         }
                     } else {

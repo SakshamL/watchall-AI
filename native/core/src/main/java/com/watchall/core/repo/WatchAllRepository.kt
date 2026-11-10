@@ -18,18 +18,36 @@ import com.watchall.core.net.TmdbClient
 import com.watchall.core.net.WatchAllApi
 import com.watchall.core.prefs.PreferencesStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 
 class WatchAllRepository(
     private val tmdb: TmdbClient,
     private val api: WatchAllApi,
     private val preferences: PreferencesStore,
+    private val feedCache: FeedCache,
 ) {
     val settings: StateFlow<AppSettings> = preferences.settings
 
-    suspend fun home(): HomeFeed = coroutineScope {
+    /**
+     * The home feed from the previous launch, if there is one. The home screen
+     * paints this immediately so a cold start never shows an empty skeleton
+     * while ten TMDB requests are in flight.
+     */
+    suspend fun cachedHome(): HomeFeed? = withContext(Dispatchers.IO) {
+        feedCache.read()?.feed
+    }
+
+    suspend fun home(): HomeFeed {
+        val feed = fetchHome()
+        withContext(Dispatchers.IO) { feedCache.write(feed) }
+        return feed
+    }
+
+    private suspend fun fetchHome(): HomeFeed = coroutineScope {
         val featured = async { safe { tmdb.featured() } }
         val rowSpecs = homeRowSpecs()
         val rowItems = rowSpecs.map { spec ->
@@ -105,6 +123,13 @@ class WatchAllRepository(
     fun clearRecentSearches() = preferences.clearRecentSearches()
 
     suspend fun details(id: Int, type: MediaType): MediaDetails = tmdb.details(id, type)
+
+    /**
+     * The "More like this" row, loaded separately once the details screen is
+     * already on screen. It costs up to four extra network calls, so it must
+     * never block the first paint.
+     */
+    suspend fun related(details: MediaDetails): List<MediaSummary> = tmdb.related(details)
 
     suspend fun personCredits(personId: Int): List<MediaSummary> {
         if (personId <= 0) return emptyList()

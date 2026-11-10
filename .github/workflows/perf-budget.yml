@@ -1,0 +1,40 @@
+name: Performance budgets
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  budgets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build release APKs
+        working-directory: native
+        run: |
+          chmod +x gradlew
+          ./gradlew :tv:assembleRelease :mobile:assembleRelease --no-daemon
+
+      - name: Check budgets
+        run: npm run perf:budget

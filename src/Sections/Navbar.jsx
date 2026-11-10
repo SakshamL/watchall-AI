@@ -21,7 +21,7 @@ function Navbar() {
   return (
     <div className="flex items-center mt-3 lg:justify-between">
       <Link to="/" className="w-[200px] ml-[3%]   cursor-pointer">
-        <img src="/logo_2.png" alt="logo" loading="eager" fetchpriority="high" />
+        <img src="/logo_2.png" alt="logo" loading="eager" fetchPriority="high" />
       </Link>
       <div
         className={`text-white ${location.pathname.endsWith("/watch") ? "hidden" : "block"} lg:hidden text-2xl cursor-pointer z-20 absolute right-5 top-10`}

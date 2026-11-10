@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,12 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.watchall.core.WatchAllGraph
 import com.watchall.core.data.MediaSummary
 import com.watchall.core.data.MediaType
 import com.watchall.core.vm.CatalogViewModel
 import com.watchall.tv.ui.components.LocalTvContentFocusRequester
-import com.watchall.tv.ui.components.TvActionButton
 import com.watchall.tv.ui.components.TvChip
 import com.watchall.tv.ui.components.TvEmpty
 import com.watchall.tv.ui.components.TvError
@@ -69,6 +70,22 @@ fun TvBrowseScreen(
 
     LaunchedEffect(type, state.language, state.genreId) {
         gridState.scrollToItem(0)
+    }
+
+    // Infinite scroll: the next page is fetched silently once the last rows of
+    // the grid come into view. Browse no longer ends in a focusable "Load more"
+    // button, which stalled the viewer and stole focus at the bottom of a page.
+    LaunchedEffect(gridState, viewModel) {
+        snapshotFlow {
+            val info = gridState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }
+            .distinctUntilChanged()
+            .collect { (lastVisible, total) ->
+                if (total > 0 && lastVisible >= total - 8) {
+                    viewModel.loadMore()
+                }
+            }
     }
 
     Column(
@@ -193,26 +210,7 @@ fun TvBrowseScreen(
                     onOpen = onOpenDetails,
                     modifier = Modifier.weight(1f),
                     state = gridState,
-                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
-                    footer = if (state.page < state.totalPages) {
-                        {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 10.dp),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                TvActionButton(
-                                    label = if (state.loadingMore) "Loading…" else "Load more",
-                                    onClick = viewModel::loadMore,
-                                    primary = true,
-                                    enabled = !state.loadingMore,
-                                )
-                            }
-                        }
-                    } else {
-                        null
-                    },
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 28.dp),
                 )
             }
         }

@@ -18,6 +18,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.watchall.core.data.PlaybackFailure
 import com.watchall.core.data.StreamResult
 import com.watchall.core.data.TrackChoice
+import com.watchall.core.util.DeviceProfile
+import com.watchall.core.util.DeviceTier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +57,7 @@ data class PlaybackSnapshot(
 class PlaybackController(context: Context) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val tier = DeviceProfile.tier(appContext)
     private var ticker: Job? = null
 
     private val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -68,17 +71,48 @@ class PlaybackController(context: Context) {
 
     private val exoPlayer: ExoPlayer = ExoPlayer.Builder(appContext)
         .setMediaSourceFactory(mediaSourceFactory)
-        .setLoadControl(
-            DefaultLoadControl.Builder()
+        .setLoadControl(buildLoadControl())
+        .build()
+
+    /**
+     * Buffer budget per device class.
+     *
+     * One 60 second buffer for every device meant a 1 GB stick could hold over
+     * 100 MB of video in RAM and get killed while a phone sat far below its
+     * limits. Low-tier devices now buffer about half as much and cap the buffer
+     * in bytes, which trades a rare rebuffer for staying alive during playback.
+     */
+    private fun buildLoadControl(): DefaultLoadControl {
+        val builder = when (tier) {
+            DeviceTier.LOW -> DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
                     15_000,
+                    30_000,
+                    3_000,
+                    6_000,
+                )
+                .setTargetBufferBytes(16 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(false)
+
+            DeviceTier.MID -> DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    20_000,
+                    45_000,
+                    2_500,
+                    5_000,
+                )
+                .setTargetBufferBytes(32 * 1024 * 1024)
+
+            DeviceTier.HIGH -> DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    20_000,
                     60_000,
                     2_500,
                     5_000,
                 )
-                .build(),
-        )
-        .build()
+        }
+        return builder.build()
+    }
 
     val player: Player get() = exoPlayer
 
@@ -270,7 +304,7 @@ class PlaybackController(context: Context) {
         val builder = exoPlayer.trackSelectionParameters.buildUpon()
         if (height == null) {
             builder.clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            builder.setMaxVideoSize(1920, 1080)
+            builder.setMaxVideoSize(1920, autoMaxHeight())
             upgradeJob?.cancel()
             scheduleQualityUpgrade(exoPlayer.currentPosition)
         } else {
@@ -431,14 +465,23 @@ private fun deviceSupportsHevc(): Boolean {
         }
     }
 
+    /**
+     * Highest resolution the "Auto" setting may pick. Low-tier devices stop at
+     * 720p: 1080p decode on those boxes costs more than the extra detail is
+     * worth and is a common cause of dropped frames.
+     */
+    private fun autoMaxHeight(): Int =
+        if (tier == DeviceTier.LOW) 720 else 1080
+
     private fun scheduleQualityUpgrade(startPositionMs: Long) {
         upgradeJob?.cancel()
+        if (tier == DeviceTier.LOW) return
         upgradeJob = scope.launch {
             delay(10_000)
             if (manualQuality) return@launch
             if (_snapshot.value.failure != null) return@launch
             exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                .setMaxVideoSize(1920, 1080)
+                .setMaxVideoSize(1920, autoMaxHeight())
                 .build()
             updateTracks()
         }

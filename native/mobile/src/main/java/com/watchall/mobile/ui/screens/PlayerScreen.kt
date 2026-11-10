@@ -207,7 +207,9 @@ fun PlayerScreen(
     LaunchedEffect(state.stream?.activeVariant?.playbackUrl) {
         if (state.stream == null) return@LaunchedEffect
         while (isActive) {
-            delay(5_000)
+            // Fifteen seconds keeps resume points fresh without rewriting the
+            // stored list every few seconds on slow hardware.
+            delay(15_000)
             val current = controller.snapshot.value
             if (current.positionMs > 0 && current.durationMs > 0) {
                 viewModel.saveProgress(current.positionMs, current.durationMs)
@@ -973,7 +975,7 @@ private fun PlayerSheetContent(
                         subtitle = when (source) {
                             SourceList.SERVER_ONE -> "Recommended Â· movies and TV shows"
                             SourceList.SERVER_TWO -> "Alternative"
-                            SourceList.SERVER_THREE -> "VegaMovies · streaming"
+                            SourceList.SERVER_THREE -> "VegaMovies ï¿½ streaming"
                         },
                         selected = state.sourceList == source,
                         enabled = true,

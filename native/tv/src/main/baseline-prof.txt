@@ -1,0 +1,18 @@
+# Hand-written startup profile for the WatchAll TV app.
+#
+# A baseline profile tells Android which code paths to compile ahead of time
+# when the app is installed. Generating one properly needs a Macrobenchmark run
+# on a real device, which was not available, so this file lists the startup
+# entry points plus wildcard rules for the app's own Compose UI, the shared
+# core module and the Compose/Coil runtimes. It is a safe subset: everything
+# listed exists in the app or is simply ignored.
+HSPLcom/watchall/tv/WatchAllTvApplication;-><init>()V
+HSPLcom/watchall/tv/WatchAllTvApplication;->onCreate()V
+HSPLcom/watchall/tv/MainActivity;-><init>()V
+HSPLcom/watchall/tv/MainActivity;->onCreate(Landroid/os/Bundle;)V
+PLcom/watchall/tv/**->**(**)**
+PLcom/watchall/core/**->**(**)**
+PLandroidx/compose/runtime/**->**(**)**
+PLandroidx/compose/ui/platform/**->**(**)**
+PLandroidx/compose/ui/input/**->**(**)**
+PLcoil3/**->**(**)**

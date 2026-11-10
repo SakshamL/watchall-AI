@@ -50,6 +50,8 @@ class DetailsViewModel(
         _state.value = _state.value.copy(loading = true, error = null)
         viewModelScope.launch {
             try {
+                // Only the main details request is awaited before the screen is
+                // allowed to paint.
                 val details = repository.details(mediaId, mediaType)
                 val resume = if (mediaType == MediaType.TV) {
                     repository.continueWatching()
@@ -69,6 +71,26 @@ class DetailsViewModel(
                         ?: 1
                     loadSeason(seasonNumber, resume?.episodeNumber)
                 }
+
+                // "More like this" costs several extra discover calls. Fill it
+                // in afterwards so it never delays the first frame.
+                val related = try {
+                    repository.related(details)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+                if (!related.isNullOrEmpty()) {
+                    val current = _state.value.details
+                    if (current != null && current.mediaKey == details.mediaKey) {
+                        _state.value = _state.value.copy(
+                            details = current.copy(recommendations = related),
+                        )
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 _state.value = _state.value.copy(
                     loading = false,

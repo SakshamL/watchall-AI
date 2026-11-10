@@ -14,16 +14,57 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.lang.reflect.Type
+import java.util.concurrent.Executors
 
+/**
+ * Small on-device store for resume points, watched history, the watchlist and
+ * recent searches.
+ *
+ * Everything is kept in memory after it is first read, and all JSON parsing and
+ * disk writes happen on a single background thread. Previously every read
+ * parsed the whole stored list and every write re-parsed and re-serialised it
+ * on whichever thread called it — which is the main thread whenever the UI asks
+ * "what was I watching?" or the player autosaves a position every few seconds.
+ * On a 1 GB TV stick that was enough to stall frames.
+ */
 class PreferencesStore(context: Context) {
     private val prefs = context.getSharedPreferences("watchall_native", Context.MODE_PRIVATE)
     private val gson = Gson()
     private val lock = Any()
 
+    /** Serialises all background persistence so writes never overtake each other. */
+    private val disk = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "watchall-prefs").apply { isDaemon = true }
+    }
+
+    private val resumeType: Type = object : TypeToken<List<ResumeEntry>>() {}.type
+    private val watchedType: Type = object : TypeToken<List<WatchedEntry>>() {}.type
+    private val watchlistType: Type = object : TypeToken<List<WatchlistItem>>() {}.type
+    private val recentSearchType: Type = object : TypeToken<List<String>>() {}.type
+
+    @Volatile private var resumeCache: List<ResumeEntry>? = null
+    @Volatile private var watchedCache: List<WatchedEntry>? = null
+    @Volatile private var watchlistCache: List<WatchlistItem>? = null
+    @Volatile private var recentSearchCache: List<String>? = null
+
     private val defaultApi = BuildConfig.DEFAULT_API_BASE_URL.trimEnd('/')
 
     private val _settings = MutableStateFlow(readSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+
+    init {
+        // Read and parse the stored lists once, in the background, while the
+        // first screen is still being built.
+        disk.execute {
+            runCatching {
+                continueWatching()
+                watched()
+                watchlist()
+                recentSearches()
+            }
+        }
+    }
 
     fun currentSettings(): AppSettings = _settings.value
 
@@ -87,14 +128,14 @@ class PreferencesStore(context: Context) {
 
     fun updateApiBaseUrl(raw: String): AppSettings {
         val normalized = normalizeBaseUrl(raw)
-        prefs.edit().putString(KEY_API_BASE_URL, normalized).apply()
+        persistString(KEY_API_BASE_URL, normalized)
         val next = AppSettings(normalized, defaultApi)
         _settings.value = next
         return next
     }
 
     fun resetApiBaseUrl(): AppSettings {
-        prefs.edit().remove(KEY_API_BASE_URL).apply()
+        asyncPersist { prefs.edit().remove(KEY_API_BASE_URL).apply() }
         val next = AppSettings(defaultApi, defaultApi)
         _settings.value = next
         return next
@@ -115,14 +156,16 @@ class PreferencesStore(context: Context) {
                 .plus(entry.copy(updatedAt = System.currentTimeMillis()))
                 .sortedByDescending { it.updatedAt }
                 .take(MAX_RESUME_ENTRIES)
-            prefs.edit().putString(KEY_RESUME, gson.toJson(entries)).apply()
+            resumeCache = entries
+            persist(KEY_RESUME, entries, resumeType)
         }
     }
 
     fun removeResume(mediaKey: String) {
         synchronized(lock) {
             val entries = readResume().filterNot { it.mediaKey == mediaKey }
-            prefs.edit().putString(KEY_RESUME, gson.toJson(entries)).apply()
+            resumeCache = entries
+            persist(KEY_RESUME, entries, resumeType)
         }
     }
 
@@ -132,12 +175,10 @@ class PreferencesStore(context: Context) {
     fun continueWatching(): List<ResumeEntry> = readResume()
 
     private fun readResume(): List<ResumeEntry> {
-        val raw = prefs.getString(KEY_RESUME, null) ?: return emptyList()
-        return try {
-            val type = object : TypeToken<List<ResumeEntry>>() {}.type
-            gson.fromJson<List<ResumeEntry>>(raw, type).orEmpty()
-        } catch (_: Exception) {
-            emptyList()
+        resumeCache?.let { return it }
+        synchronized(lock) {
+            resumeCache?.let { return it }
+            return load<ResumeEntry>(KEY_RESUME, resumeType).also { resumeCache = it }
         }
     }
 
@@ -194,36 +235,36 @@ class PreferencesStore(context: Context) {
                 .plus(merged)
                 .sortedByDescending { it.watchedAt }
                 .take(MAX_WATCHED_ENTRIES)
-            prefs.edit().putString(KEY_WATCHED, gson.toJson(next)).apply()
+            watchedCache = next
+            persist(KEY_WATCHED, next, watchedType)
         }
     }
 
     fun removeWatched(mediaKey: String) {
         synchronized(lock) {
             val next = readWatched().filterNot { it.mediaKey == mediaKey }
-            prefs.edit().putString(KEY_WATCHED, gson.toJson(next)).apply()
+            watchedCache = next
+            persist(KEY_WATCHED, next, watchedType)
         }
     }
 
     fun watched(): List<WatchedEntry> = readWatched()
 
     private fun readWatched(): List<WatchedEntry> {
-        val raw = prefs.getString(KEY_WATCHED, null) ?: return emptyList()
-        return try {
-            val type = object : TypeToken<List<WatchedEntry>>() {}.type
-            gson.fromJson<List<WatchedEntry>>(raw, type).orEmpty()
-        } catch (_: Exception) {
-            emptyList()
+        watchedCache?.let { return it }
+        synchronized(lock) {
+            watchedCache?.let { return it }
+            return load<WatchedEntry>(KEY_WATCHED, watchedType).also { watchedCache = it }
         }
     }
 
-    fun watchlist(): List<WatchlistItem> {
-        val raw = prefs.getString(KEY_WATCHLIST, null) ?: return emptyList()
-        return try {
-            val type = object : TypeToken<List<WatchlistItem>>() {}.type
-            gson.fromJson<List<WatchlistItem>>(raw, type).orEmpty()
-        } catch (_: Exception) {
-            emptyList()
+    fun watchlist(): List<WatchlistItem> = readWatchlist()
+
+    private fun readWatchlist(): List<WatchlistItem> {
+        watchlistCache?.let { return it }
+        synchronized(lock) {
+            watchlistCache?.let { return it }
+            return load<WatchlistItem>(KEY_WATCHLIST, watchlistType).also { watchlistCache = it }
         }
     }
 
@@ -239,18 +280,19 @@ class PreferencesStore(context: Context) {
             } else {
                 current + WatchlistItem(media)
             }
-            prefs.edit().putString(KEY_WATCHLIST, gson.toJson(next)).apply()
+            watchlistCache = next
+            persist(KEY_WATCHLIST, next, watchlistType)
             return !exists
         }
     }
 
-    fun recentSearches(): List<String> {
-        val raw = prefs.getString(KEY_RECENT_SEARCHES, null) ?: return emptyList()
-        return try {
-            val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(raw, type).orEmpty()
-        } catch (_: Exception) {
-            emptyList()
+    fun recentSearches(): List<String> = readRecentSearches()
+
+    private fun readRecentSearches(): List<String> {
+        recentSearchCache?.let { return it }
+        synchronized(lock) {
+            recentSearchCache?.let { return it }
+            return load<String>(KEY_RECENT_SEARCHES, recentSearchType).also { recentSearchCache = it }
         }
     }
 
@@ -260,19 +302,49 @@ class PreferencesStore(context: Context) {
         synchronized(lock) {
             val next = (listOf(value) + recentSearches().filterNot { it.equals(value, true) })
                 .take(8)
-            prefs.edit().putString(KEY_RECENT_SEARCHES, gson.toJson(next)).apply()
+            recentSearchCache = next
+            persist(KEY_RECENT_SEARCHES, next, recentSearchType)
         }
     }
 
     fun removeRecentSearch(query: String) {
         synchronized(lock) {
             val next = recentSearches().filterNot { it.equals(query.trim(), true) }
-            prefs.edit().putString(KEY_RECENT_SEARCHES, gson.toJson(next)).apply()
+            recentSearchCache = next
+            persist(KEY_RECENT_SEARCHES, next, recentSearchType)
         }
     }
 
     fun clearRecentSearches() {
-        prefs.edit().remove(KEY_RECENT_SEARCHES).apply()
+        synchronized(lock) {
+            recentSearchCache = emptyList()
+            asyncPersist { prefs.edit().remove(KEY_RECENT_SEARCHES).apply() }
+        }
+    }
+
+    /** Reads and parses a stored JSON list. Only ever called off the main thread after warm-up. */
+    private fun <T> load(key: String, type: Type): List<T> {
+        val raw = prefs.getString(key, null) ?: return emptyList()
+        return try {
+            gson.fromJson<List<T>>(raw, type).orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Serialise and write off the main thread; the in-memory copy is already current. */
+    private fun <T> persist(key: String, value: List<T>, type: Type) {
+        disk.execute {
+            runCatching { prefs.edit().putString(key, gson.toJson(value, type)).apply() }
+        }
+    }
+
+    private fun persistString(key: String, value: String) {
+        asyncPersist { prefs.edit().putString(key, value).apply() }
+    }
+
+    private fun asyncPersist(block: () -> Unit) {
+        disk.execute { runCatching(block) }
     }
 
     companion object {

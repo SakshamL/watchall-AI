@@ -14,8 +14,10 @@ import com.watchall.core.data.SeasonDetails
 import com.watchall.core.data.SeasonSummary
 import com.watchall.core.data.TitleRanking
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.time.LocalDate
@@ -78,12 +80,18 @@ class TmdbClient(
         return builder.build()
     }
 
+    /**
+     * Every TMDB call does a blocking HTTP request plus Gson parsing, so it is
+     * moved off the caller's dispatcher. Callers are almost always the UI
+     * scope, and parsing a page of JSON on the main thread is one of the
+     * biggest causes of dropped frames on low-end TV hardware.
+     */
     private suspend fun getPage(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         defaultType: MediaType,
         ttlMs: Long = 2 * 60_000L,
-    ): MediaPage {
+    ): MediaPage = withContext(Dispatchers.IO) {
         requireKey()
         val url = apiUrl(path, params + ("language" to "en-US"))
         val dto = cached("page:${url}", ttlMs) {
@@ -93,7 +101,7 @@ class TmdbClient(
                 throw IllegalStateException("TMDB returned an unreadable response.", error)
             }
         }
-        return MediaPage(
+        MediaPage(
             items = dto.results
                 .filterNot { it.adult }
                 .mapNotNull { it.toSummaryOrNull(defaultType) },
@@ -262,10 +270,10 @@ class TmdbClient(
         return dto.items to dto.totalPages
     }
 
-    suspend fun genres(type: MediaType): List<Genre> {
+    suspend fun genres(type: MediaType): List<Genre> = withContext(Dispatchers.IO) {
         requireKey()
         val url = apiUrl("genre/${type.apiValue}/list", listOf("language" to "en"))
-        return cached("genres:${type.apiValue}", 24 * 60 * 60_000L) {
+        cached("genres:${type.apiValue}", 24 * 60 * 60_000L) {
             gson.fromJson(tmdbHttpClient.getText(url), TmdbGenresDto::class.java)
                 .genres.map { Genre(it.id, it.name) }
         }
@@ -351,7 +359,7 @@ class TmdbClient(
         return TitleRanking.rank(merged.values.toList(), value).take(40)
     }
 
-    suspend fun details(id: Int, type: MediaType): MediaDetails {
+    suspend fun details(id: Int, type: MediaType): MediaDetails = withContext(Dispatchers.IO) {
         requireKey()
         val url = apiUrl(
             "${type.apiValue}/$id",
@@ -364,9 +372,20 @@ class TmdbClient(
         val dto = cached("details:${type.apiValue}:$id", 5 * 60_000L) {
             gson.fromJson(tmdbHttpClient.getText(url), TmdbDetailsDto::class.java)
         }
-        val details = dto.toDomain(type)
-        return details.copy(recommendations = relatedTitles(details))
+        dto.toDomain(type)
     }
+
+    /**
+     * Builds the "More like this" row for an already-loaded title.
+     *
+     * This used to be awaited inside [details], which meant the details screen
+     * waited for up to four extra discover calls before painting anything. It
+     * is now a separate call so the screen can render immediately and fill the
+     * row in a moment later. Until then the row shows TMDB's own picks, which
+     * arrive with the details response.
+     */
+    suspend fun related(details: MediaDetails): List<MediaSummary> =
+        withContext(Dispatchers.IO) { relatedTitles(details) }
 
     /**
      * TMDB's built-in recommendation list is overwhelmingly English for most
@@ -479,7 +498,7 @@ class TmdbClient(
      * a person worked on more than once, so the result is de-duplicated and kept
      * in popularity order for the filmography grid.
      */
-    suspend fun personCredits(personId: Int): List<MediaSummary> {
+    suspend fun personCredits(personId: Int): List<MediaSummary> = withContext(Dispatchers.IO) {
         requireKey()
         val url = apiUrl(
             "person/$personId/combined_credits",
@@ -491,7 +510,7 @@ class TmdbClient(
                 TmdbCombinedCreditsDto::class.java,
             )
         }
-        return dto.cast
+        dto.cast
             .asSequence()
             .filterNot { it.adult }
             .filter { MediaType.fromApi(it.mediaType) != null }
@@ -501,13 +520,13 @@ class TmdbClient(
             .toList()
     }
 
-    suspend fun season(id: Int, seasonNumber: Int): SeasonDetails {
+    suspend fun season(id: Int, seasonNumber: Int): SeasonDetails = withContext(Dispatchers.IO) {
         requireKey()
         val url = apiUrl("tv/$id/season/$seasonNumber", listOf("language" to "en-US"))
         val dto = cached("season:$id:$seasonNumber", 10 * 60_000L) {
             gson.fromJson(tmdbHttpClient.getText(url), TmdbSeasonDetailsDto::class.java)
         }
-        return SeasonDetails(
+        SeasonDetails(
             seasonNumber = dto.seasonNumber,
             name = dto.name.orEmpty().ifBlank { "Season $seasonNumber" },
             overview = dto.overview.orEmpty(),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Hls from "hls.js";
+
 import {
   audioTrackMatchesLanguage,
   captionsKey,
@@ -17,6 +17,24 @@ import {
   streamUrlFor,
   writeStore,
 } from "./playerUtils";
+
+// hls.js is the single largest dependency in the app and only the watch page
+// needs it. Importing it at module scope put it in the entry chunk, so every
+// visitor downloaded the player before seeing the home page. Loading it here,
+// on demand, keeps it in its own chunk.
+let hlsModulePromise = null;
+
+const loadHls = () => {
+  if (!hlsModulePromise) {
+    hlsModulePromise = import("hls.js")
+      .then((module) => module.default || module)
+      .catch((error) => {
+        hlsModulePromise = null;
+        throw error;
+      });
+  }
+  return hlsModulePromise;
+};
 
 const makeSnapshot = () => ({
   status: "idle",
@@ -914,7 +932,9 @@ export function usePlaybackEngine({
       return cleanupTracks;
     };
 
-    const attachHls = (mediaUrl) => {
+    const attachHls = async (mediaUrl) => {
+      const Hls = await loadHls();
+      if (cancelled) return undefined;
       if (Hls.isSupported()) {
         attachedRef.current = true;
         const hls = new Hls(hlsConfigFor(device));
@@ -1294,7 +1314,11 @@ export function usePlaybackEngine({
       if (!type) type = await sniffSourceType(activeUrl);
       if (cancelled) return;
       if (!type) {
-        type = Hls.isSupported() ? "hls" : "mp4";
+        // Safari plays HLS natively through the video element, so it goes down
+        // the native path; every other browser needs hls.js, which attachHls
+        // imports on demand.
+        const nativeHls = !!video.canPlayType("application/vnd.apple.mpegurl");
+        type = nativeHls ? "mp4" : "hls";
       }
       const mediaUrl = streamUrlFor(type, activeUrl, {
         forceProxy: sourceForceProxy || !!candidate?.forceProxy,
@@ -1302,7 +1326,7 @@ export function usePlaybackEngine({
       });
       patch({ engine: type });
 
-      if (type === "hls") cleanupInner = attachHls(mediaUrl);
+      if (type === "hls") cleanupInner = await attachHls(mediaUrl);
       else if (type === "dash") cleanupInner = await attachDash(mediaUrl);
       else cleanupInner = attachNative(mediaUrl, "mp4", activeUrl);
     };

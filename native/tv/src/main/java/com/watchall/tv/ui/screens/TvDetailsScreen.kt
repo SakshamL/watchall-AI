@@ -73,6 +73,7 @@ import com.watchall.tv.ui.components.TvRemoteImage
 import com.watchall.tv.ui.components.TvSectionHeader
 import com.watchall.tv.ui.components.TvSizes
 import com.watchall.tv.ui.components.TvSourcePickerDialog
+import com.watchall.tv.ui.components.rememberRowReveal
 import com.watchall.tv.ui.theme.TvColors
 import com.watchall.tv.ui.toPlayerRequest
 import kotlinx.coroutines.delay
@@ -176,7 +177,7 @@ private fun TvDetailsContent(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 36.dp),
+            contentPadding = PaddingValues(bottom = 48.dp),
         ) {
             item(key = "hero") {
                 TvDetailsHero(
@@ -197,13 +198,14 @@ private fun TvDetailsContent(
                     },
                     onToggleWatchlist = onToggleWatchlist,
                     playFocus = playFocus,
-                    onPlayFocused = { scope.launch { listState.scrollToItem(0) } },
+                    onPlayFocused = { scope.launch { listState.animateScrollToItem(0) } },
                     enabled = details.mediaType == MediaType.MOVIE || selectedEpisode != null,
                 )
             }
 
             if (details.mediaType == MediaType.TV) {
-                item(key = "episodes") {
+                item(key = "episodes", contentType = "row") {
+                    val revealRow = rememberRowReveal(listState, "episodes")
                     Column(
                         modifier = Modifier.padding(horizontal = TvSizes.PagePadding),
                     ) {
@@ -259,6 +261,7 @@ private fun TvDetailsContent(
                             state.season != null -> TvEpisodeRow(
                                 episodes = state.season!!.episodes,
                                 selectedEpisode = state.selectedEpisode,
+                                onCardFocused = revealRow,
                                 onSelect = { episode ->
                                     onSelectEpisode(episode.episodeNumber)
                                     onPlay(
@@ -283,7 +286,8 @@ private fun TvDetailsContent(
             }
 
             if (details.cast.isNotEmpty()) {
-                item(key = "cast") {
+                item(key = "cast", contentType = "row") {
+                    val revealRow = rememberRowReveal(listState, "cast")
                     Column(Modifier.padding(horizontal = TvSizes.PagePadding)) {
                         TvSectionHeader(
                             title = "Cast",
@@ -292,12 +296,13 @@ private fun TvDetailsContent(
                         LazyRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp),
+                            contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
                         ) {
                             items(details.cast.take(16), key = { it.id }) { cast ->
                                 TvCastCard(
                                     cast = cast,
                                     onClick = { onOpenPerson(cast) },
+                                    onFocusChange = { if (it) revealRow() },
                                 )
                             }
                         }
@@ -306,7 +311,11 @@ private fun TvDetailsContent(
             }
 
             if (details.recommendations.isNotEmpty()) {
-                item(key = "recommendations") {
+                item(key = "recommendations", contentType = "row") {
+                    // Extra bottom breathing room: this is the last row of the
+                    // page, so the reveal has to be able to lift the whole card
+                    // (poster plus title) clear of the viewport edge.
+                    val revealRow = rememberRowReveal(listState, "recommendations", edgePadding = 26.dp)
                     Column(Modifier.padding(horizontal = TvSizes.PagePadding)) {
                         TvSectionHeader(
                             title = "More like this",
@@ -315,6 +324,7 @@ private fun TvDetailsContent(
                         TvPosterRow(
                             items = details.recommendations,
                             onOpen = onOpenDetails,
+                            onCardFocused = revealRow,
                         )
                     }
                 }
@@ -521,6 +531,7 @@ private fun TvDetailsHero(
 private fun TvCastCard(
     cast: CastMember,
     onClick: () -> Unit,
+    onFocusChange: ((Boolean) -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     TvFocusable(
@@ -530,7 +541,12 @@ private fun TvCastCard(
         scaleOnFocus = 1.055f,
         containerColor = Color.Transparent,
         focusedContainerColor = TvColors.Card,
-        onFocusChange = { focused = it },
+        onFocusChange = {
+            focused = it
+            onFocusChange?.invoke(it)
+        },
+        bringIntoViewOnFocus = true,
+        bringIntoViewPadding = 14.dp,
     ) {
         Column(
             modifier = Modifier
@@ -582,20 +598,26 @@ private fun TvEpisodeRow(
     episodes: List<EpisodeSummary>,
     selectedEpisode: Int?,
     onSelect: (EpisodeSummary) -> Unit,
+    onCardFocused: (() -> Unit)? = null,
 ) {
     if (episodes.isEmpty()) return
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .height(174.dp),
-        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp),
+            .height(184.dp),
+        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        itemsIndexed(episodes, key = { _, episode -> episode.episodeNumber }) { _, episode ->
+        itemsIndexed(
+            items = episodes,
+            key = { _, episode -> episode.episodeNumber },
+            contentType = { _, _ -> "episode" },
+        ) { _, episode ->
             TvEpisodeCard(
                 episode = episode,
                 selected = selectedEpisode == episode.episodeNumber,
                 onClick = { onSelect(episode) },
+                onFocusChange = { if (it) onCardFocused?.invoke() },
             )
         }
     }
@@ -606,6 +628,7 @@ private fun TvEpisodeCard(
     episode: EpisodeSummary,
     selected: Boolean,
     onClick: () -> Unit,
+    onFocusChange: ((Boolean) -> Unit)? = null,
 ) {
     TvFocusable(
         onClick = onClick,
@@ -616,6 +639,9 @@ private fun TvEpisodeCard(
         scaleOnFocus = 1.035f,
         containerColor = if (selected) TvColors.CardHigh else TvColors.Card,
         focusedContainerColor = TvColors.CardHigh,
+        onFocusChange = onFocusChange,
+        bringIntoViewOnFocus = true,
+        bringIntoViewPadding = 12.dp,
     ) {
         Column(Modifier.fillMaxSize()) {
             Box(

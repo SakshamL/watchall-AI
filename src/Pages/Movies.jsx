@@ -109,7 +109,7 @@ function Movies(props) {
                 src={IMGPATH + movieDetails.backdrop_path}
                 alt=""
                 loading="eager"
-                fetchpriority="high"
+                fetchPriority="high"
                 decoding="async"
                 className="w-full h-full object-cover object-[center_15%] brightness-[1.1] img-fade-in"
                 onLoad={(e) => e.target.classList.add("loaded")}

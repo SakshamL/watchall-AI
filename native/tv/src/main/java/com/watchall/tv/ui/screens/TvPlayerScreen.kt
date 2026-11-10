@@ -213,7 +213,10 @@ fun TvPlayerScreen(
     LaunchedEffect(state.stream?.activeVariant?.playbackUrl) {
         if (state.stream == null) return@LaunchedEffect
         while (isActive) {
-            delay(5_000)
+            // Saving every five seconds meant rewriting the resume list on a
+            // low-end TV stick three times as often as needed. Fifteen seconds
+            // is still frequent enough that a crash loses almost nothing.
+            delay(15_000)
             val current = controller.snapshot.value
             if (current.positionMs > 0 && current.durationMs > 0) {
                 viewModel.saveProgress(current.positionMs, current.durationMs)

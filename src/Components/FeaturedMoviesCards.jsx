@@ -13,7 +13,7 @@ const FeaturedMoviesCards = (props) => {
           src={props.backdrop}
           alt={props.title}
           loading="eager"
-          fetchpriority="high"
+          fetchPriority="high"
           decoding="async"
           className="w-full h-full rounded-[12px] duration-200 "
           onError={(e) => { e.target.src = "/placeholder.png"; }}

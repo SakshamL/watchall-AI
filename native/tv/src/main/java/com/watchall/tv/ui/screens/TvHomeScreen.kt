@@ -60,6 +60,7 @@ import com.watchall.tv.ui.components.TvSectionHeader
 import com.watchall.tv.ui.components.TvSizes
 import com.watchall.tv.ui.components.TvSourcePickerDialog
 import com.watchall.tv.ui.components.TvViewMoreButton
+import com.watchall.tv.ui.components.rememberRowReveal
 import com.watchall.tv.ui.theme.TvColors
 import com.watchall.tv.ui.toPlayerRequest
 import kotlinx.coroutines.delay
@@ -121,7 +122,7 @@ fun TvHomeScreen(
                     start = TvSizes.PagePadding,
                     end = TvSizes.PagePadding,
                     top = 16.dp,
-                    bottom = 36.dp,
+                    bottom = 44.dp,
                 ),
             ) {
                 if (hero != null) {
@@ -143,7 +144,10 @@ fun TvHomeScreen(
                 }
 
                 if (state.continueWatching.isNotEmpty()) {
-                    item(key = "continue") {
+                    item(key = "continue", contentType = "row") {
+                        // Keeps the whole row (poster and caption) on screen when
+                        // focus moves into it from the hero.
+                        val revealRow = rememberRowReveal(listState, "continue")
                         Column {
                             TvSectionHeader(
                                 title = "Continue watching",
@@ -153,6 +157,7 @@ fun TvHomeScreen(
                                 entries = state.continueWatching,
                                 onResume = onResume,
                                 firstFocusRequester = continueFocus,
+                                onCardFocused = revealRow,
                             )
                         }
                     }
@@ -160,7 +165,8 @@ fun TvHomeScreen(
 
                 feed.rows.forEachIndexed { index, row ->
                     if (row.items.isNotEmpty()) {
-                        item(key = row.id) {
+                        item(key = row.id, contentType = "row") {
+                            val revealRow = rememberRowReveal(listState, row.id)
                             Column {
                                 TvSectionHeader(
                                     title = row.title,
@@ -180,6 +186,7 @@ fun TvHomeScreen(
                                     onOpen = onOpenDetails,
                                     ranked = row.ranked,
                                     firstFocusRequester = if (index == 0) firstRowFocus else null,
+                                    onCardFocused = revealRow,
                                 )
                             }
                         }

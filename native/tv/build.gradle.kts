@@ -1,7 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+/**
+ * A minified release build is roughly nine times smaller and far faster than
+ * the debug build, but only if it can be installed. If the developer has a real
+ * release keystore configured in native/keystore.properties it is used;
+ * otherwise the build falls back to the standard debug keystore so a release
+ * APK is always installable on the TV stick.
+ */
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasReleaseKeystore = !keystoreProps.getProperty("storeFile").isNullOrBlank()
 
 android {
     namespace = "com.watchall.tv"
@@ -16,6 +31,17 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -24,6 +50,12 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                // Installable fallback for sideloading on a TV stick.
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -71,6 +103,10 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
 
     implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.0")
+    // Pinned to the version available in this build environment; satisfies
+    // profileinstaller's transitive 1.1.1 requirement.
+    implementation("androidx.startup:startup-runtime:1.2.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

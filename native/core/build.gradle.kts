@@ -50,4 +50,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+
+    // Exposed so both apps configure the same tuned Coil loader
+    // (WatchAllImageLoader) instead of each building its own.
+    api("io.coil-kt.coil3:coil:3.6.3")
 }

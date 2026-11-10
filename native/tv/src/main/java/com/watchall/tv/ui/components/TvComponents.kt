@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -55,16 +57,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -90,6 +99,8 @@ import com.watchall.core.data.MediaType
 import com.watchall.core.data.ResumeEntry
 import com.watchall.core.data.WatchedEntry
 import com.watchall.tv.ui.theme.TvColors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * Compact 10-foot sizing. Android TV reports about 960 x 540 dp at 1080p, so a
@@ -102,7 +113,79 @@ object TvSizes {
     val PosterGap = 14.dp
     val ContinueWidth = 284.dp
     val ContinueHeight = 98.dp
-    val PagePadding = 32.dp
+
+    /**
+     * 44 dp on a ~960 dp wide TV canvas is about 4.6%. The old 32 dp (3.3%) sat
+     * inside the overscan area that many TVs still crop, so edge content could
+     * be cut off on a real panel even though it looked fine in the emulator.
+     */
+    val PagePadding = 44.dp
+}
+
+/**
+ * Card design tokens.
+ *
+ * Every brush and shape here is created once and shared by all cards. Building
+ * a gradient inside a composable allocates a fresh Brush on each recomposition,
+ * which during a fast scroll means hundreds of throwaway objects every second.
+ */
+private val TvPosterShape = RoundedCornerShape(12.dp)
+private val TvPosterHairline = Color.White.copy(alpha = 0.10f)
+private val TvPosterFocusSheen = Color.White.copy(alpha = 0.07f)
+private val TvPosterPlaceholder = Brush.linearGradient(
+    listOf(TvColors.CardHigh, TvColors.Card, TvColors.DeepInk),
+)
+private val TvPosterScrim = Brush.verticalGradient(
+    0.52f to Color.Transparent,
+    0.80f to Color.Black.copy(alpha = 0.34f),
+    1f to Color.Black.copy(alpha = 0.82f),
+)
+private val TvRankScrim = Brush.verticalGradient(
+    0f to Color.Transparent,
+    1f to Color.Black.copy(alpha = 0.88f),
+)
+private val TvFocusRing = Brush.linearGradient(
+    listOf(Color(0xFFD8C4FF), TvColors.Cyan, TvColors.Teal),
+)
+
+/**
+ * Returns a callback that scrolls the enclosing LazyColumn just enough to show a
+ * whole row: the posters *and* the title lines underneath them. Compose's
+ * default focus scrolling stops at the outer row item, so a card parked at the
+ * bottom edge kept its caption off screen.
+ */
+@Composable
+fun rememberRowReveal(
+    listState: LazyListState,
+    itemKey: Any,
+    edgePadding: Dp = 18.dp,
+): () -> Unit {
+    val scope = rememberCoroutineScope()
+    val edgePaddingPx = with(LocalDensity.current) { edgePadding.roundToPx() }
+    val jobSlot = remember { arrayOfNulls<Job>(1) }
+    return remember(listState, itemKey, edgePaddingPx) {
+        {
+            jobSlot[0]?.cancel()
+            jobSlot[0] = scope.launch {
+                val info = listState.layoutInfo
+                val item = info.visibleItemsInfo.firstOrNull { it.key == itemKey }
+                    ?: return@launch
+                val viewportBottom = info.viewportEndOffset - edgePaddingPx
+                val itemBottom = item.offset + item.size
+                val delta = when {
+                    itemBottom > viewportBottom -> itemBottom - viewportBottom
+                    item.offset < info.viewportStartOffset -> item.offset - info.viewportStartOffset
+                    else -> 0
+                }
+                if (delta != 0) {
+                    listState.animateScrollBy(
+                        delta.toFloat(),
+                        tween(durationMillis = 170, easing = FastOutSlowInEasing),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** The focus target the selected nav tab should move to when Down is pressed. */
@@ -120,9 +203,7 @@ fun TvRemoteImage(
     contentScale: ContentScale = ContentScale.Crop,
 ) {
     Box(
-        modifier = modifier.background(
-            Brush.linearGradient(listOf(TvColors.CardHigh, TvColors.Card, TvColors.DeepInk)),
-        ),
+        modifier = modifier.background(TvPosterPlaceholder),
     ) {
         AsyncImage(
             model = ImageUrls.poster(path, size),
@@ -162,25 +243,53 @@ fun TvFocusable(
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
     bringIntoViewOnFocus: Boolean = false,
+    bringIntoViewPadding: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    var cardSize by remember { mutableStateOf(IntSize.Zero) }
     val interactionSource = remember { MutableInteractionSource() }
+    // The animation only touches graphicsLayer, so a focus move is a draw-time
+    // change: no recomposition per frame, which is what keeps D-pad travel on
+    // a 60 Hz TV panel from stuttering.
     val scale by animateFloatAsState(
         targetValue = if (focused) scaleOnFocus else 1f,
-        animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 110, easing = FastOutSlowInEasing),
         label = "tv-focus-scale",
     )
     val bringIntoView = remember { BringIntoViewRequester() }
+    val bringPaddingPx = with(LocalDensity.current) { bringIntoViewPadding.roundToPx() }
 
+    // Ask for a slightly larger rect than the card so the whole card (poster,
+    // title, meta line) lands inside the viewport with breathing room instead
+    // of being flushed against the bottom edge.
     LaunchedEffect(focused) {
-        if (focused && bringIntoViewOnFocus) {
-            runCatching { bringIntoView.bringIntoView() }
+        if (!focused || !bringIntoViewOnFocus) return@LaunchedEffect
+        withFrameNanos { }
+        val width = cardSize.width
+        val height = cardSize.height
+        val rect = if (bringPaddingPx > 0 && width > 0 && height > 0) {
+            Rect(
+                left = -bringPaddingPx.toFloat(),
+                top = -bringPaddingPx.toFloat(),
+                right = (width + bringPaddingPx).toFloat(),
+                bottom = (height + bringPaddingPx).toFloat(),
+            )
+        } else {
+            null
+        }
+        runCatching {
+            if (rect != null) {
+                bringIntoView.bringIntoView(rect)
+            } else {
+                bringIntoView.bringIntoView()
+            }
         }
     }
 
     Box(
         modifier = modifier
+            .onSizeChanged { cardSize = it }
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -260,41 +369,60 @@ fun TvPosterCard(
     rightFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = false,
+    bringIntoViewOnFocus: Boolean = true,
 ) {
+    var focused by remember { mutableStateOf(false) }
     val columnModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
-    Column(modifier = columnModifier) {
-        TvFocusable(
-            onClick = onClick,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f),
-            shape = RoundedCornerShape(10.dp),
-            focusRequester = focusRequester,
-            scaleOnFocus = 1.05f,
-            onFocusChange = onFocusChange,
-            leftFocusRequester = leftFocusRequester,
-            rightFocusRequester = rightFocusRequester,
-            upFocusRequester = upFocusRequester,
-            downFocusRequester = downFocusRequester,
-            bringIntoViewOnFocus = bringIntoViewOnFocus,
-        ) {
-            Box(Modifier.fillMaxSize()) {
+    TvFocusable(
+        onClick = onClick,
+        modifier = columnModifier,
+        shape = TvPosterShape,
+        focusRequester = focusRequester,
+        scaleOnFocus = 1.06f,
+        onFocusChange = {
+            focused = it
+            onFocusChange?.invoke(it)
+        },
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        bringIntoViewOnFocus = bringIntoViewOnFocus,
+        bringIntoViewPadding = 14.dp,
+        containerColor = Color.Transparent,
+        focusedContainerColor = Color.Transparent,
+        borderColor = Color.Transparent,
+        focusBorderColor = Color.Transparent,
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f)
+                    .clip(TvPosterShape)
+                    .background(TvPosterPlaceholder)
+                    .border(
+                        width = 1.dp,
+                        color = if (focused) Color.Transparent else TvPosterHairline,
+                        shape = TvPosterShape,
+                    ),
+            ) {
                 TvRemoteImage(
                     path = media.posterPath,
                     contentDescription = media.displayTitle,
                     size = "w342",
                     modifier = Modifier.fillMaxSize(),
                 )
+                // A dedicated draw pass instead of another gradient layer keeps
+                // the per-card composable count (and overdraw) low.
                 Box(
                     Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.26f)),
-                            ),
-                        ),
+                        .matchParentSize()
+                        .drawBehind { drawRect(TvPosterScrim) },
                 )
+                if (focused) {
+                    Box(Modifier.matchParentSize().background(TvPosterFocusSheen))
+                }
                 if (media.rating > 0) {
                     Row(
                         modifier = Modifier
@@ -324,12 +452,8 @@ fun TvPosterCard(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.86f)),
-                                ),
-                            )
-                            .padding(start = 8.dp, bottom = 5.dp),
+                            .background(TvRankScrim)
+                            .padding(start = 9.dp, bottom = 6.dp, top = 10.dp),
                     ) {
                         Text(
                             text = "TOP 10",
@@ -349,22 +473,29 @@ fun TvPosterCard(
                         )
                     }
                 }
+                if (focused) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .border(2.dp, TvFocusRing, TvPosterShape),
+                    )
+                }
             }
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = media.displayTitle,
-            style = MaterialTheme.typography.labelLarge,
-            color = TvColors.Text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" � "),
-            style = MaterialTheme.typography.labelSmall,
-            color = TvColors.TextMuted,
-            maxLines = 1,
-        )
+                style = MaterialTheme.typography.labelLarge.copy(lineHeight = 17.sp),
+                color = if (focused) Color.White else TvColors.Text.copy(alpha = 0.90f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = TvColors.TextMuted,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -377,7 +508,7 @@ fun TvContinueCard(
     focusRequester: FocusRequester? = null,
     onFocusChange: ((Boolean) -> Unit)? = null,
     leftFocusRequester: FocusRequester? = null,
-    bringIntoViewOnFocus: Boolean = false,
+    bringIntoViewOnFocus: Boolean = true,
 ) {
     TvFocusable(
         onClick = onClick,
@@ -390,6 +521,7 @@ fun TvContinueCard(
         onFocusChange = onFocusChange,
         leftFocusRequester = leftFocusRequester,
         bringIntoViewOnFocus = bringIntoViewOnFocus,
+        bringIntoViewPadding = 12.dp,
         containerColor = TvColors.Card,
         focusedContainerColor = TvColors.CardHigh,
     ) {
@@ -1128,19 +1260,25 @@ fun TvPosterRow(
     ranked: Boolean = false,
     landscape: Boolean = false,
     firstFocusRequester: FocusRequester? = null,
+    onCardFocused: (() -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
     LazyRow(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
+        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(if (landscape) 14.dp else TvSizes.PosterGap),
     ) {
-        itemsIndexed(items, key = { _, media -> media.key }) { index, media ->
+        itemsIndexed(
+            items = items,
+            key = { _, media -> media.key },
+            contentType = { _, _ -> if (landscape) "landscape" else "poster" },
+        ) { index, media ->
             if (landscape) {
                 TvLandscapeCard(
                     media = media,
                     onClick = { onOpen(media) },
                     focusRequester = if (index == 0) firstFocusRequester else null,
+                    onFocusChange = { if (it) onCardFocused?.invoke() },
                 )
             } else {
                 TvPosterCard(
@@ -1149,6 +1287,7 @@ fun TvPosterRow(
                     width = TvSizes.PosterWidth,
                     rank = if (ranked && index < 10) index + 1 else null,
                     focusRequester = if (index == 0) firstFocusRequester else null,
+                    onFocusChange = { if (it) onCardFocused?.invoke() },
                 )
             }
         }
@@ -1161,18 +1300,24 @@ fun TvContinueRow(
     onResume: (ResumeEntry) -> Unit,
     modifier: Modifier = Modifier,
     firstFocusRequester: FocusRequester? = null,
+    onCardFocused: (() -> Unit)? = null,
 ) {
     if (entries.isEmpty()) return
     LazyRow(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        itemsIndexed(entries, key = { _, entry -> entry.mediaKey + entry.updatedAt }) { index, entry ->
+        itemsIndexed(
+            items = entries,
+            key = { _, entry -> entry.mediaKey + entry.updatedAt },
+            contentType = { _, _ -> "continue" },
+        ) { index, entry ->
             TvContinueCard(
                 entry = entry,
                 onClick = { onResume(entry) },
                 focusRequester = if (index == 0) firstFocusRequester else null,
+                onFocusChange = { if (it) onCardFocused?.invoke() },
             )
         }
     }
@@ -1185,6 +1330,7 @@ fun TvWatchedCard(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    onFocusChange: ((Boolean) -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     TvFocusable(
@@ -1193,8 +1339,13 @@ fun TvWatchedCard(
         modifier = modifier.width(148.dp),
         shape = RoundedCornerShape(11.dp),
         focusRequester = focusRequester,
-        scaleOnFocus = 1.035f,
-        onFocusChange = { focused = it },
+        scaleOnFocus = 1.04f,
+        onFocusChange = {
+            focused = it
+            onFocusChange?.invoke(it)
+        },
+        bringIntoViewOnFocus = true,
+        bringIntoViewPadding = 12.dp,
         containerColor = TvColors.Card,
         focusedContainerColor = TvColors.CardHigh,
     ) {
@@ -1278,19 +1429,25 @@ fun TvWatchedRow(
     onRemove: (WatchedEntry) -> Unit,
     modifier: Modifier = Modifier,
     firstFocusRequester: FocusRequester? = null,
+    onCardFocused: (() -> Unit)? = null,
 ) {
     if (entries.isEmpty()) return
     LazyRow(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        itemsIndexed(entries, key = { _, entry -> entry.mediaKey }) { index, entry ->
+        itemsIndexed(
+            items = entries,
+            key = { _, entry -> entry.mediaKey },
+            contentType = { _, _ -> "watched" },
+        ) { index, entry ->
             TvWatchedCard(
                 entry = entry,
                 onClick = { onOpen(entry) },
                 onRemove = { onRemove(entry) },
                 focusRequester = if (index == 0) firstFocusRequester else null,
+                onFocusChange = { if (it) onCardFocused?.invoke() },
             )
         }
     }
@@ -1306,7 +1463,7 @@ fun TvPosterGrid(
     minColumnWidth: Dp = 118.dp,
     landscape: Boolean = false,
     state: LazyGridState = rememberLazyGridState(),
-    contentPadding: PaddingValues = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
+    contentPadding: PaddingValues = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 40.dp),
     footer: (@Composable () -> Unit)? = null,
 ) {
     LazyVerticalGrid(
@@ -1317,7 +1474,11 @@ fun TvPosterGrid(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        itemsIndexed(items, key = { _, media -> media.key }) { index, media ->
+        itemsIndexed(
+            items = items,
+            key = { _, media -> media.key },
+            contentType = { _, _ -> if (landscape) "landscape" else "poster" },
+        ) { index, media ->
             if (landscape) {
                 TvLandscapeCard(
                     media = media,
@@ -1360,8 +1521,10 @@ fun TvLandscapeCard(
                 .aspectRatio(16f / 9f),
             shape = RoundedCornerShape(10.dp),
             focusRequester = focusRequester,
-            scaleOnFocus = 1.04f,
+            scaleOnFocus = 1.045f,
             onFocusChange = { focused = it; onFocusChange?.invoke(it) },
+            bringIntoViewOnFocus = true,
+            bringIntoViewPadding = 14.dp,
             containerColor = TvColors.Card,
             focusedContainerColor = TvColors.CardHigh,
         ) {
@@ -1411,7 +1574,7 @@ fun TvLandscapeCard(
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" � "),
+            text = listOf(media.year, media.mediaType.label).filter { it.isNotBlank() }.joinToString(" · "),
             style = MaterialTheme.typography.labelSmall,
             color = TvColors.TextMuted,
             maxLines = 1,

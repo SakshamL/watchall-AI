@@ -10,6 +10,8 @@ import com.watchall.core.data.StreamResult
 import com.watchall.core.data.StreamVariant
 import com.watchall.core.prefs.PreferencesStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -147,14 +149,14 @@ class WatchAllApi(
             .toString()
     }
 
-    suspend fun servers(): List<ServerInfo> {
+    suspend fun servers(): List<ServerInfo> = withContext(Dispatchers.IO) {
         val url = endpoint("api/servers")
         val body = backendHttpClient.getText(url)
         val dto = gson.fromJson(body, ServersResponseDto::class.java)
         if (dto.error != null && dto.servers.isEmpty()) {
             throw ExtractionException(dto.error)
         }
-        return dto.servers
+        dto.servers
             .filter { it.name.isNotBlank() }
             .map {
                 ServerInfo(
@@ -173,7 +175,7 @@ class WatchAllApi(
         server: String? = null,
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
-    ): StreamResult {
+    ): StreamResult = withContext(Dispatchers.IO) {
         if (mediaType == MediaType.TV && !source.supportsTv) {
             throw ExtractionException("Server List 2 is available for movies only.")
         }
@@ -227,7 +229,7 @@ class WatchAllApi(
         val captionsUrl = dto.captionsUrl?.let { resolveRelative(it) } ?: ""
         val captions = dto.captions.mapNotNull { toCaptionTrack(it, referer) }
 
-        return StreamResult(
+        StreamResult(
             playbackUrl = proxyUrl(originalUrl, type, referer),
             originalUrl = originalUrl,
             type = type,

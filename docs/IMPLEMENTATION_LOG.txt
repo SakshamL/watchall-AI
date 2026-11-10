@@ -1088,3 +1088,244 @@ native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
 How it was verified:
 - :tv:compileDebugKotlin and :tv:assembleDebug completed successfully offline.
 - Server change not deployed (Vercel login required); user should run `vercel --prod` after login.
+
+---
+
+Date: Sat Nov 07 2026
+Area: TV card design, Home scroll performance, Browse paging, focus reveal
+
+Issue/Feature:
+1. Movie cards looked flat and the focus animation felt abrupt.
+2. On the movie details page the "More like this" cards were cut off vertically.
+3. The home screen stuttered while scrolling.
+4. Browse still ended in a "Load more" button instead of loading more automatically.
+5. When a card at the bottom of the screen received focus, only the poster came into view and the title stayed off screen (Home, Browse, More like this).
+
+What was changed and how it works now:
+- Poster cards redesigned: 12 dp artwork corners, a permanent hairline edge, a deeper bottom scrim, a soft brightening plus a violet/blue gradient ring on focus, and a smoother 110 ms focus scale (was an abrupt 60 ms).
+- Every gradient, placeholder and ring brush is now created once and shared, and the poster scrim is a single draw pass instead of another gradient layer, so scrolling no longer allocates throwaway objects for every card. Lazy rows and grids now declare item content types so Compose can reuse already-composed slots instead of rebuilding them while scrolling.
+- Focusing a card now asks its scroll container to reveal a rectangle slightly larger than the card (14 dp extra), so the poster, title and caption land inside the viewport with breathing room.
+- Each Home and Details row also reveals the whole row inside the vertical list through a new rememberRowReveal helper, so a card in the bottom row scrolls fully into view instead of keeping its caption off screen.
+- Bottom padding of the scrolling lists increased (Home 44 dp, Details 48 dp, grids 40 dp) so the last row can always be lifted clear of the screen edge.
+- Browse: the focusable "Load more" button is gone. The grid watches the last visible item and silently fetches the next page about eight items before the end; the existing page counter row shows a small spinner while that happens. The same leftover button on collection screens (which already auto-load) was replaced by a non-focusable "Loading more" indicator.
+- Episode row height raised from 174 dp to 184 dp so a focused episode card is no longer clipped.
+- Two corrupted separators in the card caption (the middle dot had become a replacement character) were repaired.
+
+Files affected:
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvHomeScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvBrowseScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvCollectionScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvDetailsScreen.kt
+
+How it was verified:
+- :tv:compileDebugKotlin succeeded offline (the list bottom padding changes
+  landed on Home 52 dp, Browse 40 dp, Collection 40 dp, Details 56 dp).
+- Not verified on a TV device or emulator: the exact on-screen gap between the
+  bottom-row caption and the screen edge still needs a visual check against
+  the TV display.
+
+================================================================================
+Date: November 09, 2026
+Area: Native TV + mobile app (startup, memory, video player, image cache, TV safe area)
+
+Issue/Feature:
+1. The home screen showed nothing until about ten separate catalogue requests
+   had all finished, so a cold start felt slow even on a good connection.
+2. The video player used one buffer size on every device. On a 1 GB TV stick
+   that could mean over 100 MB of video held in memory, which is what gets the
+   app killed during playback.
+3. The TV app asked Android for an oversized heap, which hides memory leaks and
+   makes garbage collection pauses longer.
+4. Poster images were cached with the library defaults: too generous on weak
+   devices, and every poster faded in even when the device could not afford it.
+5. Page content sat inside the edge strip that many TVs still crop (overscan).
+
+What was changed and how it works now:
+- The last good home feed is saved on the device. On the next launch it is
+  painted in the first frame and the network refreshes it silently behind the
+  user. If a refresh fails, the saved feed stays on screen instead of an error
+  page. Writes go through a temporary file, so a crash cannot leave a broken
+  feed behind.
+- New device tier detection (low / mid / high) based on Android's low-RAM flag,
+  memory class, total RAM and core count. It is computed once per launch and is
+  used by the player and the image loader.
+- Player buffers now scale with the tier: low 15/30 seconds capped at 16 MB,
+  mid 20/45 seconds capped at 32 MB, high 20/60 seconds. Low-tier devices also
+  stop at 720p and never auto-upgrade to 1080p, which is a common cause of
+  dropped frames on cheap boxes.
+- One shared image loader for both apps with tier-sized memory (10 / 20 / 25 %)
+  and disk (64 / 96 / 128 MB) caches, and no fade-in on low-tier devices.
+- Both apps hand image memory back when Android reports low memory or the app
+  moves to the background.
+- Removed android:largeHeap from the TV app.
+- TV page padding raised from 32 dp to 44 dp (about 4.6% of a 960 dp canvas), so
+  edge content clears the overscan area on real panels.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/util/DeviceProfile.kt (new)
+native/core/src/main/java/com/watchall/core/util/WatchAllImageLoader.kt (new)
+native/core/src/main/java/com/watchall/core/repo/FeedCache.kt (new)
+native/core/src/main/java/com/watchall/core/WatchAllGraph.kt
+native/core/src/main/java/com/watchall/core/repo/WatchAllRepository.kt
+native/core/src/main/java/com/watchall/core/vm/HomeViewModel.kt
+native/core/src/main/java/com/watchall/core/playback/PlaybackController.kt
+native/core/build.gradle.kts
+native/tv/src/main/java/com/watchall/tv/WatchAllTvApplication.kt
+native/mobile/src/main/java/com/watchall/mobile/WatchAllApplication.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvComponents.kt
+native/tv/src/main/AndroidManifest.xml
+
+How it was verified:
+- :tv:compileDebugKotlin and :mobile:compileDebugKotlin both succeed.
+- :tv:assembleRelease and :mobile:assembleRelease succeed with R8 and resource
+  shrinking: TV 2.68 MB, mobile 2.78 MB.
+- Not verified on hardware: cold-start time, buffer behaviour under pressure and
+  memory use still need a run on a real TV box and a real phone. No TV device or
+  TV emulator is available here, so the overscan padding has not been seen on a
+  panel either.
+
+================================================================================
+Date: November 09, 2026
+Area: Web app (first-load size)
+
+Issue/Feature:
+Every visitor downloaded the entire application plus the full video player
+before the home page could appear: 312 KB of gzipped JavaScript in the first
+file alone.
+
+What was changed and how it works now:
+- Each page is now its own file, loaded only when that page is opened, with a
+  small spinner while it arrives. The navigation bar stays immediate.
+- hls.js (the HLS playback library) is no longer part of the first download. The
+  watch page imports it the moment it actually needs it, and browsers that play
+  HLS natively keep using their built-in player.
+- Removed the unused @mui/icons-material package.
+- Fixed the fetchPriority attribute casing so the hero image's high-priority
+  hint is valid under React 19 (it was logging an invalid-DOM-property error).
+
+Result: the first JavaScript file dropped from 312 KB to 83.5 KB gzipped and the
+first CSS file from 17.9 KB to 10.9 KB. The player library now sits in its own
+181.5 KB chunk that only the watch page fetches.
+
+Files affected:
+src/App.jsx
+src/Components/Player/usePlaybackEngine.js
+src/Components/FeaturedMoviesCards.jsx
+src/Pages/Movies.jsx
+src/Sections/Navbar.jsx
+package.json
+package-lock.json
+
+How it was verified:
+- npm run build succeeds; sizes measured from the dist output.
+- The dev server was loaded in a browser: the home page and the movies page both
+  render through their on-demand files with no console errors after the change.
+
+================================================================================
+Date: November 09, 2026
+Area: Tooling (performance budgets, leak detection)
+
+Issue/Feature:
+Nothing stopped the apps from quietly getting heavier again after this work.
+
+What was changed and how it works now:
+- scripts/check-budgets.mjs measures the built web files and the two release
+  APKs against fixed limits and exits with a failure when one is over budget:
+  150 KB gzipped first JavaScript file, 25 KB first CSS file, 260 KB player
+  chunk, and 25 MB per release APK. Missing artefacts are reported as skipped,
+  so the check runs with or without the Android build.
+- npm run perf:budget runs it.
+- .github/workflows/perf-budget.yml builds the web bundle and both release APKs
+  on every push to main and every pull request, then runs the check.
+- LeakCanary added to the debug builds of both apps to catch memory leaks while
+  developing.
+
+Current readings: first JavaScript 83.5 / 150 KB, first CSS 10.9 / 25 KB,
+player chunk 181.5 / 260 KB, TV APK 2.68 / 25 MB, mobile APK 2.78 / 25 MB.
+
+Files affected:
+scripts/check-budgets.mjs (new)
+.github/workflows/perf-budget.yml (new)
+package.json
+native/tv/build.gradle.kts
+native/mobile/build.gradle.kts
+
+How it was verified:
+- Ran against the real artefacts: all five checks pass.
+- Ran against a deliberately oversized fake build: it fails with exit code 1 and
+  names the two files that are over, so the check is not silently passing.
+
+================================================================================
+Date: November 10, 2026
+Area: Android release build, network, storage, details screen, video player
+
+Issue/Feature:
+The TV app felt slow on 1 GB devices, and the fast release build could not be
+used because it broke at runtime. Four separate problems were behind this:
+1. The minified release build produced empty screens. The keep rules only
+   protected the shared data models, so the network response models were renamed
+   and about 46 fields could no longer be filled from JSON.
+2. There was no signing setup for release builds, so a release APK could not be
+   installed on the TV stick even when it was built.
+3. All network requests, all JSON parsing and all reading/writing of resume
+   points, watched history, the watchlist and recent searches ran on the main
+   thread. The player also rewrote the resume list every five seconds.
+4. The details screen waited for up to four extra "More like this" requests
+   before it showed anything.
+
+What was changed and how it works now:
+- Keep rules now cover the whole shared core (data, network and preferences
+  packages), plus the attributes Gson needs: generic signatures, annotations and
+  their defaults. Rules were also added for Gson's TypeToken subclasses, which
+  is how the stored lists are read back.
+- Both apps now have a release signing setup. If native/keystore.properties
+  exists its keystore is used; otherwise the standard debug keystore is used, so
+  a release APK is always installable. A real keystore can be added later
+  without touching the build files again.
+- LeakCanary was removed from the debug builds (it was only a development
+  helper and it made the debug app heavier and slower), and
+  androidx.profileinstaller was added with a hand-written startup profile so
+  Android compiles the app's hot startup code ahead of time.
+- Every TMDB and WatchAll server call now runs on a background thread, including
+  the JSON parsing. Screens can no longer be blocked by network work.
+- Resume points, watched history, the watchlist and recent searches are now read
+  once into memory at startup and served from memory afterwards. Saving updates
+  the memory copy immediately and writes to disk on a single background thread.
+  Nothing is parsed or written on the main thread any more.
+- The details screen now shows the title, artwork, cast and actions as soon as
+  the single details request finishes. The "More like this" row is fetched
+  afterwards and filled in when it arrives; until then it shows TMDB's own
+  recommendations, which already come with the details response.
+- The player now saves its position every fifteen seconds instead of every five,
+  on both the TV and the phone app.
+
+Results: the release APK is 2.70 MB against 23.72 MB for the debug APK, it is
+signed and installable, its DEX still contains every network and data model with
+all field names, 45 @SerializedName annotations survived shrinking, and the
+stored-list type information is intact, so the release build can now actually be
+used. The startup profile is embedded in the APK.
+
+Files affected:
+native/core/consumer-rules.pro
+native/core/src/main/java/com/watchall/core/net/TmdbClient.kt
+native/core/src/main/java/com/watchall/core/net/WatchAllApi.kt
+native/core/src/main/java/com/watchall/core/prefs/PreferencesStore.kt
+native/core/src/main/java/com/watchall/core/repo/WatchAllRepository.kt
+native/core/src/main/java/com/watchall/core/vm/DetailsViewModel.kt
+native/tv/build.gradle.kts
+native/tv/src/main/baseline-prof.txt (new)
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/mobile/build.gradle.kts
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+
+How it was verified:
+- :tv:assembleDebug, :tv:assembleRelease, :mobile:assembleDebug and
+  :mobile:assembleRelease all completed offline.
+- apksigner confirms the release APK is signed (debug certificate fallback).
+- dexdump on the release APK shows com.watchall.core.net classes and their field
+  names are intact, 45 @SerializedName annotations are retained, and the
+  TypeToken subclasses keep signatures such as TypeToken<List<ResumeEntry>>.
+- The APK contains assets/dexopt/baseline.prof and the profileinstaller marker.
+- Not verified on a real device: frame timings and the perceived smoothness still
+  need a check on the Fire TV Stick with the release build.
