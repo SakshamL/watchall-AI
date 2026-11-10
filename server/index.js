@@ -21,7 +21,15 @@ const { extractVidnest, buildEmbedPage } = require("./vidnest-extractor.cjs");
 
 // puppeteer-extra is used with the stealth plugin for local Chrome launches.
 // Browserless provides its own stealth layer when running on Vercel.
-const puppeteer = require("puppeteer-extra");
+// On Vercel we use plain puppeteer (which connects to a hosted Browserless
+// instance). puppeteer-extra wraps puppeteer-core, but that package is an ES
+// module and cannot be require()'d from puppeteer-extra's CommonJS bundle inside
+// a Vercel serverless function, so it is only loaded locally where stealth
+// evasion is actually needed.
+const isVercelRuntime = !!process.env.VERCEL;
+const puppeteer = isVercelRuntime
+  ? require("puppeteer")
+  : require("puppeteer-extra");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
