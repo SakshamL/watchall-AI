@@ -1764,15 +1764,20 @@ const TMDB_API_KEY_SERVER = "04c35731a5ee918f014970082a0088b1";
 const TMDB_BASE_SERVER = "https://api.themoviedb.org/3";
 
 async function extractVegamoviesServer(tmdb, type, getBrowser) {
-  // Get TMDB title
+  // Get TMDB title and release year. The year is what tells two films with the
+  // same name apart in the search results.
   let title = null;
-  for (const t of ["movie", "tv"]) {
+  let year = "";
+  const order = type === "tv" ? ["tv", "movie"] : ["movie", "tv"];
+  for (const t of order) {
     try {
       const res = await axios.get(
         `${TMDB_BASE_SERVER}/${t}/${encodeURIComponent(tmdb)}?api_key=${TMDB_API_KEY_SERVER}`,
         { timeout: 10000 }
       );
       title = res.data.title || res.data.name || res.data.original_title || res.data.original_name;
+      const date = String(res.data.release_date || res.data.first_air_date || "");
+      if (/^\d{4}/.test(date)) year = date.slice(0, 4);
       if (title) break;
     } catch {}
   }
@@ -1804,34 +1809,101 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
       }
     });
 
-    // Search VegaMovies
+    // Search VegaMovies.
+    //
+    // The site rotates its domain every few months (vegamovies4 → vegamovies8 →
+    // …) and 301-redirects the old host to the new one. Never hardcode the host:
+    // read the origin the browser actually landed on and build every URL from it.
     await page.goto("https://vegamovies4.co.in/", { waitUntil: "networkidle2", timeout: 20000 });
-    await page.evaluate((t) => {
-      const input = document.querySelector('input[name="story"]');
-      if (input) input.value = t;
-      const form = document.querySelector('form');
-      if (form) form.submit();
-    }, title);
-    await new Promise((r) => setTimeout(r, 5000));
+    const homeOrigin = new URL(page.url()).origin;
+
+    // The homepage has several POST forms; submit the one that owns the search
+    // box instead of "the first form on the page".
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 20000 }).catch(() => {}),
+      page.evaluate((t) => {
+        const input = document.querySelector('input[name="story"]');
+        if (!input) return;
+        input.value = t;
+        const form = input.closest("form") || document.querySelector("form");
+        if (form) form.submit();
+      }, title),
+    ]);
+    await new Promise((r) => setTimeout(r, 2000));
 
     const html = await page.content();
-    const linkRe = /vegamovies4\.co\.in\/(\d+-[a-z0-9-]+\.html)/gi;
-    const matches = [...html.matchAll(linkRe)].map((m) => m[1]);
-    const unique = [...new Set(matches)];
+    const resultsOrigin = new URL(page.url()).origin || homeOrigin;
 
-    if (!unique.length) throw new Error("No VegaMovies results for " + title);
-
-    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const target = norm(title);
-    let movieUrl = null;
-    for (const slug of unique) {
-      const titlePart = slug.replace(/^\d+-/, "").replace(/\.html$/, "").replace(/-/g, " ");
-      if (norm(titlePart).includes(target) || target.includes(norm(titlePart))) {
-        movieUrl = "https://vegamovies4.co.in/" + slug;
-        break;
-      }
+    // Accept absolute links on any mirror plus root-relative links, and keep
+    // only real movie slugs (numeric id + title + .html).
+    const found = [
+      ...html.matchAll(/https?:\/\/[^"'\s<>]*?\/(\d+-[a-z0-9-]+\.html)/gi),
+    ].map((m) => m[1]);
+    for (const m of html.matchAll(
+      /(?:href|src)=["'](?:https?:\/\/[^"'\s<>]*?)?\/?(\d+-[a-z0-9-]+\.html)["']/gi
+    )) {
+      found.push(m[1]);
     }
-    if (!movieUrl) movieUrl = "https://vegamovies4.co.in/" + unique[0];
+    const unique = [...new Set(found)];
+
+    if (!unique.length) throw new Error(`No VegaMovies results for "${title}"`);
+
+    // Match on whole words, never on substrings: "Jawan" must not match
+    // "Hai Jawani Toh Ishq Hona Hai". Score every candidate and pick the best;
+    // when the top two are equally good we refuse to guess.
+    const STOPWORDS = new Set(["the", "a", "an", "and", "of", "in", "to", "for", "part"]);
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const tokensOf = (s) => norm(s).split(" ").filter((w) => w && !STOPWORDS.has(w));
+
+    const targetPhrase = norm(title);
+    const targetTokens = tokensOf(title);
+
+    const scored = unique
+      .map((slug) => {
+        const slugTitle = slug.replace(/^\d+-/, "").replace(/\.html$/, "").replace(/-/g, " ");
+        const slugPhrase = norm(slugTitle);
+        const slugTokens = new Set(tokensOf(slugTitle));
+        let score = 0;
+        if (slugPhrase === targetPhrase) {
+          score = 100;
+        } else if (targetTokens.length && targetTokens.every((w) => slugTokens.has(w))) {
+          score = 80;
+        } else if (targetTokens.length > 1) {
+          const overlap = targetTokens.filter((w) => slugTokens.has(w)).length;
+          if (overlap >= Math.ceil(targetTokens.length * 0.75)) score = 60;
+        }
+        if (score === 0) return null;
+        if (year) {
+          if (slugPhrase.includes(year)) score += 15;
+          else if (/\b(19|20)\d{2}\b/.test(slugPhrase)) score -= 10;
+        }
+        return { slug, score };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        // Among equally good matches prefer the one carrying the release year.
+        const aYear = year && a.slug.includes(year) ? 1 : 0;
+        const bYear = year && b.slug.includes(year) ? 1 : 0;
+        return bYear - aYear;
+      });
+
+    if (!scored.length) {
+      throw new Error(
+        `No VegaMovies result matched "${title}" (checked ${unique.length} results)`
+      );
+    }
+    if (
+      scored.length > 1 &&
+      scored[1].score === scored[0].score &&
+      scored[0].score < 80
+    ) {
+      throw new Error(
+        `VegaMovies results for "${title}" are ambiguous (${unique.length} candidates)`
+      );
+    }
+
+    const movieUrl = new URL(scored[0].slug, resultsOrigin).toString();
 
     // Navigate to movie page and extract stream
     await page.goto(movieUrl, { waitUntil: "domcontentloaded", timeout: 20000 });

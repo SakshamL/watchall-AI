@@ -53,6 +53,13 @@ data class PlayerUiState(
     val switchingServer: String? = null,
     val notice: PlayerNotice? = null,
     val startPositionMs: Long = 0L,
+    /**
+     * Bumped every time a stream finishes loading. The player screen keys its
+     * "load this stream" effect on it, so retrying a title that resolves to the
+     * exact same URL still restarts playback instead of leaving the old failed
+     * player on screen.
+     */
+    val loadToken: Long = 0L,
 ) {
     val currentListFailed: Boolean get() = failedLists.contains(sourceList)
     val otherSource: SourceList? get() = availableSources.firstOrNull { it != sourceList }
@@ -331,6 +338,7 @@ class PlayerViewModel(
                     switchingServer = null,
                     loadingMessage = "",
                     startPositionMs = rememberedPositionMs,
+                    loadToken = _state.value.loadToken + 1,
                 )
             } catch (error: CancellationException) {
                 throw error

@@ -193,7 +193,7 @@ fun TvPlayerScreen(
         }
     }
 
-    LaunchedEffect(state.stream?.activeVariant?.playbackUrl) {
+    LaunchedEffect(state.stream?.activeVariant?.playbackUrl, state.loadToken) {
         val stream = state.stream ?: return@LaunchedEffect
         controlsVisible = true
         controller.load(
@@ -210,7 +210,7 @@ fun TvPlayerScreen(
         }
     }
 
-    LaunchedEffect(state.stream?.activeVariant?.playbackUrl) {
+    LaunchedEffect(state.stream?.activeVariant?.playbackUrl, state.loadToken) {
         if (state.stream == null) return@LaunchedEffect
         while (isActive) {
             // Saving every five seconds meant rewriting the resume list on a
@@ -1102,6 +1102,15 @@ private fun TvPlayerError(
                 color = TvColors.TextMuted,
                 textAlign = TextAlign.Center,
             )
+            if ((state.playbackFailure?.code ?: "").isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Code: ${state.playbackFailure?.code}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TvColors.TextMuted.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+            }
             Spacer(Modifier.height(28.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (secondaryLabel != null && secondaryAction != null) {

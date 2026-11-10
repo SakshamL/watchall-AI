@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -57,6 +58,7 @@ data class PlaybackSnapshot(
 class PlaybackController(context: Context) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val tag = "WatchAllPlayer"
     private val tier = DeviceProfile.tier(appContext)
     private var ticker: Job? = null
 
@@ -142,6 +144,7 @@ class PlaybackController(context: Context) {
             }
             if (playbackState == Player.STATE_READY) {
                 _snapshot.update { it.copy(failure = null) }
+                ensureVideoTrackSelected()
                 updateTracks()
             }
             if (playbackState == Player.STATE_ENDED) {
@@ -150,6 +153,11 @@ class PlaybackController(context: Context) {
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            Log.e(
+                tag,
+                "Playback error ${error.errorCodeName} (${error.errorCode}) url=${currentStream?.activeVariant?.originalUrl}",
+                error,
+            )
             _snapshot.update {
                 it.copy(
                     isBuffering = false,
@@ -190,6 +198,7 @@ class PlaybackController(context: Context) {
         upgradeJob?.cancel()
         audioTargets.clear()
         textTargets.clear()
+        _snapshot.update { it.copy(failure = null) }
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
 
@@ -364,6 +373,26 @@ class PlaybackController(context: Context) {
         scope.cancel()
         exoPlayer.removeListener(listener)
         exoPlayer.release()
+    }
+
+    /**
+     * The LOW-tier 720p cap can hide every video track a stream actually offers
+     * (some sources only ship 1080p). That leaves a black screen with audio, or
+     * no playback at all on an emulator. If nothing got selected, drop the cap
+     * and let the device try what it has.
+     */
+    private fun ensureVideoTrackSelected() {
+        val hasVideoGroup = exoPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+        if (!hasVideoGroup) return
+        val selected = exoPlayer.currentTracks.groups.any { group ->
+            group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { group.isTrackSelected(it) }
+        }
+        if (selected) return
+        Log.w(tag, "no video track selected after READY; relaxing maxVideoSize")
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+            .build()
+        updateTracks()
     }
 
     private fun refreshProgress() {

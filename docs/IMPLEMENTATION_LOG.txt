@@ -1329,3 +1329,57 @@ How it was verified:
 - The APK contains assets/dexopt/baseline.prof and the profileinstaller marker.
 - Not verified on a real device: frame timings and the perceived smoothness still
   need a check on the Fire TV Stick with the release build.
+
+---
+
+Date: 2026-11-10
+Area: Video player / stream extraction / VegaMovies
+
+Issue/Feature:
+Three reported problems: (1) no streaming server would play a video on the TV
+emulator - streams loaded, spun, then fell back to the loading screen and
+reported no stream available; (2) VegaMovies was completely dead because its
+domain had moved; (3) VegaMovies picked the wrong film when several search
+results shared a word (for example "Jawan" matched "Hai Jawani toh Ishq Hona
+Hai").
+
+What changed:
+- server/index.js - VegaMovies: the hardcoded "vegamovies4.co.in" host is gone.
+  The extractor now reads the origin the browser actually lands on after the
+  site's redirect, so domain rotations (4 -> 8 -> ...) no longer break it.
+  The search form submit now targets the form that owns the search box instead
+  of "the first form on the page", and result links are collected from any
+  mirror and any numeric movie slug.
+- server/index.js - VegaMovies title matching now compares whole words instead
+  of substrings, scores every candidate (exact > all words present > partial
+  overlap) and prefers the one carrying the TMDB release year. It refuses to
+  play when the top two candidates are equally good, so it can no longer
+  silently play a random result. TMDB lookups now prefer the passed-in type
+  (movie vs tv) so a movie id is not misread as a TV show.
+- native core PlaybackController: PlaybackExceptions are now logged with their
+  error code, name and the failing URL; the snapshot failure is cleared on load
+  so retries always restart; if the 720p cap on low-tier devices hides every
+  video track a stream actually offers, the cap is relaxed so playback is not
+  stuck on a black screen.
+- native core PlayerViewModel: a loadToken is bumped on every successful
+  extract and the TV player keys its "load this stream" effect on it, so
+  retrying a title that resolves to the same URL now reloads instead of doing
+  nothing.
+- native tv TvPlayerScreen: the playback error screen now shows the underlying
+  error code, and the load/autosave effects restart on loadToken.
+
+Files affected:
+server/index.js
+native/core/src/main/java/com/watchall/core/playback/PlaybackController.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+
+How it was verified:
+- Local server run: /api/extract?source=3 now returns a playable stream for
+  Jawan (referer is the 2023 Jawan page, not "Hai Jawani...") and for Fight
+  Club; the old hardcoded host and substring match are gone.
+- :tv:compileReleaseKotlin and :tv:assembleRelease completed offline; the
+  release APK is signed and R8 still keeps the media3 HLS classes.
+- The emulator playback failure could not be reproduced locally (no device);
+  the added error-code logging and UI are intended to capture the exact code on
+  the next run.
