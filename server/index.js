@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WatchAll — HLS Proxy Server
  *
  * Optimizations over the basic version:
@@ -21,15 +21,11 @@ const { extractVidnest, buildEmbedPage } = require("./vidnest-extractor.cjs");
 
 // puppeteer-extra is used with the stealth plugin for local Chrome launches.
 // Browserless provides its own stealth layer when running on Vercel.
-// On Vercel we use plain puppeteer (which connects to a hosted Browserless
-// instance). puppeteer-extra wraps puppeteer-core, but that package is an ES
-// module and cannot be require()'d from puppeteer-extra's CommonJS bundle inside
-// a Vercel serverless function, so it is only loaded locally where stealth
-// evasion is actually needed.
-const isVercelRuntime = !!process.env.VERCEL;
-const puppeteer = isVercelRuntime
-  ? require("puppeteer")
-  : require("puppeteer-extra");
+// puppeteer is an ES module in v25, so it cannot be require()'d from this
+// CommonJS file (Vercel's Node runtime does not support require() of ESM).
+// We load it with a dynamic import() instead, which works on every Node version.
+// puppeteer-extra is only needed locally for stealth evasion; Browserless handles
+// stealth for the hosted instance, so we never touch puppeteer-extra on Vercel.
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -72,22 +68,14 @@ function localLaunchOptions() {
   };
 }
 
-// Browserless's /stealth endpoint already handles anti-detection. The local
-// stealth plugin is only needed when launching Chrome ourselves, and loading
-// its dynamic evasion modules inside a Vercel function breaks the bundle.
-let localStealthApplied = false;
-function applyLocalStealth() {
-  if (localStealthApplied) return;
-  const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-  puppeteer.use(StealthPlugin());
-  localStealthApplied = true;
-}
 
 async function getBrowser() {
   const endpoint = browserlessEndpoint();
   if (endpoint) {
     console.log("[browser] Connecting to Browserless");
     try {
+      const mod = await import("puppeteer");
+      const puppeteer = mod.default || mod;
       return await puppeteer.connect({ browserWSEndpoint: endpoint });
     } catch (error) {
       const detail = redactSecret(error?.message || "");
@@ -102,7 +90,11 @@ async function getBrowser() {
       "BROWSERLESS_TOKEN is not configured. Add it in the Vercel project environment variables."
     );
   }
-  applyLocalStealth();
+  const stealthMod = await import("puppeteer-extra-plugin-stealth");
+  const StealthPlugin = stealthMod.default || stealthMod;
+  const extraMod = await import("puppeteer-extra");
+  const puppeteer = extraMod.default || extraMod;
+  puppeteer.use(StealthPlugin());
   return puppeteer.launch(localLaunchOptions());
 }
 
