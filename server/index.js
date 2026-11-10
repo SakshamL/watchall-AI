@@ -1797,7 +1797,14 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
       const url = request.url();
       if (!/^https?:\/\//i.test(url)) return;
       const pathname = new URL(url).pathname.toLowerCase();
-      const kind = pathname.includes(".m3u8") ? "hls" : pathname.includes(".mpd") ? "dash" : pathname.match(/\.mp4$/) ? "mp4" : "";
+      const full = url.toLowerCase();
+      const kind = pathname.includes(".m3u8") || full.includes(".m3u8")
+        ? "hls"
+        : pathname.includes(".mpd") || full.includes(".mpd")
+          ? "dash"
+          : pathname.match(/\.mp4([?#]|$)/) || full.match(/\.mp4([?#]|$)/)
+            ? "mp4"
+            : "";
       if (kind && !/\.(ts|m4s|aac|vtt|srt|key|jpg|jpeg|png|gif|webp|ico|css|js|woff2?|ttf|map)([?#]|$)/i.test(url)) {
         const now = Date.now();
         if (!candidates.has(kind)) {
@@ -1906,9 +1913,62 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
     const movieUrl = new URL(scored[0].slug, resultsOrigin).toString();
 
     // Navigate to movie page and extract stream
-    await page.goto(movieUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+    try {
+      await page.goto(movieUrl, { waitUntil: "networkidle2", timeout: 25000 });
+    } catch {
+      await page.goto(movieUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+    }
+    await new Promise((r) => setTimeout(r, 2000));
 
-    const deadline = Date.now() + 20000;
+    // If the player lives in an iframe (slast430did.com), make sure it is
+    // actually loaded: some mirrors only inject the iframe after a short delay.
+    let iframeSrc = null;
+    try {
+      iframeSrc = await page.evaluate(() => {
+        const f = [...document.querySelectorAll("iframe")].find((x) =>
+          /slast|player|embed/i.test(x.src || "")
+        );
+        return f ? f.src : null;
+      });
+    } catch {}
+    if (iframeSrc) {
+      console.log("[vegamovies] player iframe:", iframeSrc);
+      try {
+        const p2 = await browser.newPage();
+        await p2.setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+        );
+        p2.on("request", (request) => {
+          const url = request.url();
+          if (!/^https?:\/\//i.test(url)) return;
+          const pathname = new URL(url).pathname.toLowerCase();
+          const full = url.toLowerCase();
+          const kind = pathname.includes(".m3u8") || full.includes(".m3u8")
+            ? "hls"
+            : pathname.includes(".mpd") || full.includes(".mpd")
+              ? "dash"
+              : pathname.match(/\.mp4([?#]|$)/) || full.match(/\.mp4([?#]|$)/)
+                ? "mp4"
+                : "";
+          if (kind && !/\.(ts|m4s|aac|vtt|srt|key|jpg|jpeg|png|gif|webp|ico|css|js|woff2?|ttf|map)([?#]|$)/i.test(url)) {
+            const now = Date.now();
+            if (!candidates.has(kind)) {
+              candidates.set(kind, { url, type: kind, firstSeen: now, lastSeen: now });
+            } else {
+              candidates.get(kind).url = url;
+              candidates.get(kind).lastSeen = now;
+            }
+          }
+        });
+        await p2.goto(iframeSrc, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 8000));
+        try { await p2.close(); } catch {}
+      } catch (e) {
+        console.log("[vegamovies] iframe load failed:", e?.message || e);
+      }
+    }
+
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       if (candidates.has("hls") || candidates.has("mp4") || candidates.has("dash")) {
         await new Promise((r) => setTimeout(r, 500));
@@ -1916,6 +1976,13 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
       }
       await new Promise((r) => setTimeout(r, 250));
     }
+
+    console.log(
+      "[vegamovies] candidates after wait:",
+      [...candidates.keys()],
+      "iframeSrc:",
+      iframeSrc
+    );
 
     let streamUrl = null;
     let streamType = null;
