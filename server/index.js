@@ -1787,15 +1787,23 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
   try {
     const page = await browser.newPage();
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     );
     await page.setViewport({ width: 1366, height: 768 });
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => false });
+        Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+        window.chrome = { runtime: {} };
+      });
 
     const candidates = new Map();
 
     page.on("request", (request) => {
       const url = request.url();
       if (!/^https?:\/\//i.test(url)) return;
+      if (url.includes("salov447hev")) {
+        console.log("[vegamovies][main-req]", request.method(), url.slice(0, 150));
+      }
       const pathname = new URL(url).pathname.toLowerCase();
       const full = url.toLowerCase();
       const kind = pathname.includes(".m3u8") || full.includes(".m3u8")
@@ -1936,11 +1944,12 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
       try {
         const p2 = await browser.newPage();
         await p2.setUserAgent(
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         );
         p2.on("request", (request) => {
           const url = request.url();
           if (!/^https?:\/\//i.test(url)) return;
+          console.log("[vegamovies][iframe-req]", request.method(), url.slice(0, 160));
           const pathname = new URL(url).pathname.toLowerCase();
           const full = url.toLowerCase();
           const kind = pathname.includes(".m3u8") || full.includes(".m3u8")
@@ -1958,6 +1967,16 @@ async function extractVegamoviesServer(tmdb, type, getBrowser) {
               candidates.get(kind).url = url;
               candidates.get(kind).lastSeen = now;
             }
+          }
+        });
+        p2.on("response", async (resp) => {
+          const url = resp.url();
+          if (url.includes("salov447hev.com/playlist/")) {
+            try {
+              const text = await resp.text();
+              console.log("[vegamovies][playlist-resp]", url.slice(0, 120));
+              console.log("[vegamovies][playlist-body]", text.slice(0, 500));
+            } catch {}
           }
         });
         await p2.goto(iframeSrc, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
@@ -2044,7 +2063,7 @@ app.get("/api/netnaija/extract", async (req, res) => {
     Referer: `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
     "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
     "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   };
 
   try {
@@ -2275,7 +2294,7 @@ app.get("/api/netnaija/captions", async (req, res) => {
       : "https://netnaija.film/",
     "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
     "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   };
 
   const endpoints = [
