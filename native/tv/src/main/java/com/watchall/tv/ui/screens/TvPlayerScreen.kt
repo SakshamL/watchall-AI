@@ -196,6 +196,7 @@ fun TvPlayerScreen(
 
     LaunchedEffect(state.stream?.activeVariant?.playbackUrl, state.loadToken) {
         val stream = state.stream ?: return@LaunchedEffect
+        if (stream.type == "embed") return@LaunchedEffect
         controlsVisible = true
         controller.load(
             stream = stream,

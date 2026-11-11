@@ -194,6 +194,7 @@ fun PlayerScreen(
 
     LaunchedEffect(state.stream?.activeVariant?.playbackUrl) {
         val stream = state.stream ?: return@LaunchedEffect
+        if (stream.type == "embed") return@LaunchedEffect
         controller.load(
             stream = stream,
             startPositionMs = state.startPositionMs,

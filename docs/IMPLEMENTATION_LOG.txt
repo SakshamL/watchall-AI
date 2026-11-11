@@ -1539,3 +1539,28 @@ native/core/src/main/java/com/watchall/core/net/WatchAllApi.kt
 How it was verified:
 - :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.
 - npm run build succeeds.
+
+---
+
+Date: 2026-11-11
+Area: Embed playback (native)
+
+Issue or feature:
+Server List 3 (VidSrc) showed "video format is not supported" on the player
+screen because ExoPlayer tried to play the embed URL as HLS.
+
+What changed and how it works now:
+- WatchAllApi recognises type "embed": keeps the raw URL (no proxy), sets
+  type to "embed", builds no variants.
+- TvPlayerScreen and PlayerScreen skip controller.load() for embed streams,
+  so ExoPlayer never attempts to play the HTML page.
+- The WebView branch (already present) renders the embed URL.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/net/WatchAllApi.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+
+How it was verified:
+- :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.
+- npm run build succeeds.
