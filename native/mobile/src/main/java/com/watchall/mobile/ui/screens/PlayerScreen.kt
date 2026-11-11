@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.webkit.WebView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -241,19 +242,33 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = controller.player
-                    useController = false
-                    resizeMode = resizeMode
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                    keepScreenOn = true
-                }
-            },
-            update = { view -> view.resizeMode = resizeMode },
-            modifier = Modifier.fillMaxSize(),
-        )
+        val embedUrl = state.stream?.takeIf { it.type == "embed" }?.activeVariant?.playbackUrl
+        if (embedUrl != null) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        loadUrl(embedUrl)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = controller.player
+                        useController = false
+                        resizeMode = resizeMode
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                        keepScreenOn = true
+                    }
+                },
+                update = { view -> view.resizeMode = resizeMode },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (state.stream != null && !state.hasError) {
             Box(
@@ -801,6 +816,8 @@ private fun PlayerLoadingOverlay(
             Text(
                 text = if (state.sourceList == SourceList.SERVER_TWO) {
                     "Server List 2 can take up to 30 seconds to find a stream."
+                } else if (state.sourceList == SourceList.SERVER_THREE) {
+                    "Server List 3 opens an embedded player."
                 } else {
                     "Choosing the best available player. This usually takes a few seconds."
                 },
@@ -973,6 +990,7 @@ private fun PlayerSheetContent(
                         subtitle = when (source) {
                             SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
                             SourceList.SERVER_TWO -> "Alternative"
+                            SourceList.SERVER_THREE -> "VidSrc · embed"
                         },
                         selected = state.sourceList == source,
                         enabled = true,

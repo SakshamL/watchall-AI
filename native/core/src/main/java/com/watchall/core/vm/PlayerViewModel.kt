@@ -161,6 +161,10 @@ class PlayerViewModel(
             switchList(SourceList.SERVER_TWO)
             return
         }
+        if (name.equals("VidSrc", ignoreCase = true)) {
+            switchList(SourceList.SERVER_THREE)
+            return
+        }
         if (name == current.activeServer && !current.loading) {
             _state.value = current.copy(
                 notice = PlayerNotice(text = "Already playing from ${UiText.sourceName(name)}."),
@@ -204,11 +208,12 @@ class PlayerViewModel(
         val candidate = if (
             current.sourceList == SourceList.SERVER_ONE &&
             !autoFallbackUsed &&
-            current.servers.isNotEmpty()
+            current.servers.isNotEmpty() &&
+            current.activeServer == null
         ) {
             val names = current.servers.map { it.name }
             val active = current.activeServer
-            val activeIndex = names.indexOf(active)
+            val activeIndex = if (active == null) -1 else names.indexOf(active)
             val nextName = if (activeIndex >= 0) {
                 names.getOrNull((activeIndex + 1) % names.size)
             } else {
@@ -282,6 +287,7 @@ class PlayerViewModel(
     private fun loadingMessage(source: SourceList, server: String?): String {
         return when {
             source == SourceList.SERVER_TWO -> "Trying Server List 2…"
+            source == SourceList.SERVER_THREE -> "Trying Server List 3…"
             !server.isNullOrBlank() -> "Opening ${UiText.sourceName(serverLabel(server))}…"
             else -> "Finding your stream…"
         }
@@ -318,6 +324,7 @@ class PlayerViewModel(
                 )
                 val active = when {
                     nextSource == SourceList.SERVER_TWO -> "Vidnest"
+                    nextSource == SourceList.SERVER_THREE -> "VidSrc"
                     !stream.server.isNullOrBlank() -> stream.server
                     else -> server
                 }

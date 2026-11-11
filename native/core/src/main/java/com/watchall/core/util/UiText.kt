@@ -13,6 +13,7 @@ object UiText {
         if (name.isNullOrBlank()) return "Auto"
         return when (name.lowercase()) {
             "vidnest" -> SourceList.SERVER_TWO.displayName
+            "vidsrc" -> SourceList.SERVER_THREE.displayName
             "viduki" -> SourceList.SERVER_ONE.displayName
             else -> name
         }

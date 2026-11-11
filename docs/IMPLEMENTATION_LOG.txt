@@ -1432,3 +1432,54 @@ How it was verified:
   `:tv:assembleRelease` and `:mobile:assembleRelease` finished with
   BUILD SUCCESSFUL. The signed TV release APK is 2.70 MB and the phone release
   APK is 2.81 MB.
+
+---
+
+Date: 2026-11-11
+Area: Stream sources / playback stability (all platforms)
+
+Issue or feature:
+1. Default server sometimes played for a moment, then flipped back to a
+   loading state showing the server name, and finally showed "no stream found".
+   This happened in the web, phone and TV apps.
+2. Request to add a third server option: VidSrc (vidsrc.sh), with raw video
+   played in the app's own player like the other servers.
+
+What changed and how it works now:
+- Playback fallback is now conservative: when a stream fails after it has
+   already started playing, the apps no longer auto-switch to another server
+   and re-extract (which caused the "loads, then loading, then no stream found"
+   loop). Auto-fallback now only happens when the stream never started.
+- Added VidSrc as Server List 3 everywhere. VidSrc only provides embed URLs,
+   not raw streams, so it plays inside an embedded frame (its own controls)
+   instead of through ExoPlayer/hls.js:
+   * Server: new "vidsrc" branch in /api/extract. For movies it looks up the
+     IMDB id from TMDB and builds https://vidsrc.sh/embed/movie/{imdb}; for TV
+     it builds https://vidsrc.sh/embed/tv/{tmdb}/{season}/{episode}. Returns
+     type "embed".
+   * Web: SourceSelectModal lists Server List 3; VideoPlayer renders an iframe
+     for embed streams; urlSource/selectSource/switchServer/otherSource updated.
+   * Native: SourceList.SERVER_THREE ("vidsrc"), picker subtitles, loading
+     messages, UiText. TvPlayerScreen and PlayerScreen render a WebView for
+     embed streams.
+   * Legacy source=4 / "vidsrc" links are accepted; unknown values still fall
+     back to Server List 1.
+
+Files affected:
+server/index.js
+src/Components/SourceSelectModal.jsx
+src/Pages/VideoPlayer.jsx
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/util/UiText.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/SourcePickerDialog.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvSourcePickerDialog.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+
+How it was verified:
+- Server: node --check passes; local /api/extract for vidsrc returns a valid
+  embed URL for a movie (Jawan -> tt15354916) and a TV episode (1399/1/1).
+- Web: npm run build succeeds.
+- Native: :tv:assembleRelease and :mobile:assembleRelease finished with
+  BUILD SUCCESSFUL (TV 2.70 MB, phone 2.81 MB).

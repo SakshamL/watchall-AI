@@ -5,6 +5,7 @@ import "./SourceSelectModal.css";
 const SOURCES = [
   { id: "viduki", title: "Server List 1", hint: "Recommended" },
   { id: "vidnest", title: "Server List 2", hint: "Alternative" },
+  { id: "vidsrc", title: "Server List 3", hint: "VidSrc (embed)" },
 ];
 
 export default function SourceSelectModal({ open, onClose, onSelect }) {

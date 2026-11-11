@@ -587,7 +587,9 @@ app.get("/api/extract", async (req, res) => {
   const source =
     rawSource === "vidnest" || rawSource === "2"
       ? "vidnest"
-      : "viduki";
+      : rawSource === "vidsrc" || rawSource === "4"
+        ? "vidsrc"
+        : "viduki";
   const forcedSrv =
     typeof req.query.srv === "string" ? req.query.srv.trim().replace(/[^A-Za-z]/g, "") : "";
   // TMDB original_language of the title (e.g. "hi"). Hindi titles get Viduki's
@@ -639,6 +641,60 @@ app.get("/api/extract", async (req, res) => {
         : raw ||
           "This server list could not find a playable stream for this title. Try Server List 1.";
       return res.status(502).json({ error: safe });
+    }
+  }
+
+  if (source === "vidsrc") {
+    if (!/^\d{1,10}$/.test(String(tmdb))) {
+      return res.status(400).json({ error: "A numeric TMDB id is required." });
+    }
+    const cacheKey = `vidsrc:${type}:${tmdb}:${season || ""}:${episode || ""}`;
+    const cached = getCachedExtract(cacheKey);
+    if (cached) {
+      console.log(`[vidsrc] Cache hit: ${cacheKey}`);
+      return res.json(cached);
+    }
+    console.log(`[vidsrc] Extracting: tmdb=${tmdb} type=${type} s=${season || "-"} e=${episode || "-"}`);
+    try {
+      let imdbId = null;
+      if (type !== "tv") {
+        try {
+          const r = await axios.get(
+            `https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdb)}?api_key=04c35731a5ee918f014970082a0088b1`,
+            { timeout: 10000 }
+          );
+          imdbId = r.data && r.data.imdb_id ? r.data.imdb_id : null;
+        } catch (e) {
+          console.log(`[vidsrc] TMDB movie lookup failed: ${e.message}`);
+        }
+      }
+      const id = imdbId || tmdb;
+      let embedUrl;
+      if (type === "tv" && season && episode) {
+        embedUrl = `https://vidsrc.sh/embed/tv/${id}/${season}/${episode}`;
+      } else if (type === "tv") {
+        embedUrl = `https://vidsrc.sh/embed/tv/${id}`;
+      } else {
+        embedUrl = `https://vidsrc.sh/embed/movie/${id}`;
+      }
+      const data = {
+        streamUrl: embedUrl,
+        type: "embed",
+        server: "VidSrc",
+        referer: "",
+        forceProxy: false,
+        candidates: [],
+        streams: [],
+        captions: [],
+        captionsUrl: "",
+        preferDash: false,
+      };
+      setCachedExtract(cacheKey, data);
+      console.log(`[vidsrc] Result: ${embedUrl}`);
+      return res.json(data);
+    } catch (error) {
+      console.error(`[vidsrc] Error: ${error.message}`);
+      return res.status(502).json({ error: "VidSrc could not find a playable stream for this title. Try another server list." });
     }
   }
 

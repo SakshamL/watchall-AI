@@ -95,6 +95,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.ui.AspectRatioFrameLayout
+import android.webkit.WebView
 import androidx.media3.ui.PlayerView
 import com.watchall.core.data.Formatters
 import com.watchall.core.data.PlayerRequest
@@ -326,20 +327,34 @@ fun TvPlayerScreen(
             }
             .focusable(),
     ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = controller.player
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                    keepScreenOn = true
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
+        val embedUrl = state.stream?.takeIf { it.type == "embed" }?.activeVariant?.playbackUrl
+        if (embedUrl != null) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        loadUrl(embedUrl)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = controller.player
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                        keepScreenOn = true
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (state.stream != null && !state.hasError) {
             AnimatedVisibility(
@@ -1208,6 +1223,7 @@ private fun TvPlayerSheetContent(
                         subtitle = when (source) {
                             SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
                             SourceList.SERVER_TWO -> "Alternative · movies only · slower"
+                            SourceList.SERVER_THREE -> "VidSrc · embed player"
                         },
                         selected = state.sourceList == source,
                         onClick = { onSelectList(source) },

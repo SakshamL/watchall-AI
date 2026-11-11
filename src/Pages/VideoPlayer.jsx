@@ -66,7 +66,9 @@ const VideoPlayer = () => {
   const urlSource =
     urlSourceValue === "vidnest" || urlSourceValue === "2"
       ? "vidnest"
-      : "viduki";
+      : urlSourceValue === "vidsrc" || urlSourceValue === "4"
+        ? "vidsrc"
+        : "viduki";
   const [sourceId, setSourceId] = useState(urlSource);
   const [metadata, setMetadata] = useState(null);
   const [source, setSource] = useState(null);
@@ -142,12 +144,14 @@ const VideoPlayer = () => {
       switchingList
         ? sourceId === "vidnest"
           ? "Trying Server List 2…"
+          : sourceId === "vidsrc"
+            ? "Trying Server List 3…"
             : "Trying Server List 1…"
         : sourceId === "vidnest"
           ? "Getting your stream ready…"
-          : pendingServer
-              ? `Loading ${serverDisplayName(pendingServer)} from Server List 1…`
-              : "Getting your stream ready…"
+          : sourceId === "vidsrc"
+            ? "Getting your stream ready…"
+            : pendingServer
     );
 
     const start = async () => {
@@ -215,6 +219,8 @@ const VideoPlayer = () => {
           data.server ||
             (sourceId === "vidnest"
               ? "Vidnest"
+              : sourceId === "vidsrc"
+                ? "VidSrc"
                 : null)
         );
         setSourceError(null);
@@ -288,6 +294,7 @@ const VideoPlayer = () => {
     (nextSource) => {
       const params = new URLSearchParams(window.location.search);
       if (nextSource === "vidnest") params.set("source", "2");
+      else if (nextSource === "vidsrc") params.set("source", "4");
       else params.delete("source");
       const query = params.toString();
       navigate(`/movie/${id}/watch${query ? `?${query}` : ""}`, {
@@ -315,6 +322,13 @@ const VideoPlayer = () => {
         preferredServerRef.current = "";
         setSourceId("vidnest");
         selectSource("vidnest");
+        return;
+      }
+      if (name === "VidSrc") {
+        if (sourceId === "vidsrc") return;
+        preferredServerRef.current = "";
+        setSourceId("vidsrc");
+        selectSource("vidsrc");
         return;
       }
 
@@ -431,6 +445,7 @@ const VideoPlayer = () => {
     (error, failedSource) => {
       markSourceFailed(sourceId);
       if (autoFallbackRef.current || sourceId === "vidnest") return;
+      if (activeServer) return;
       const listServers = servers.filter(
         (item) => item.group === "Server List 1"
       );
@@ -465,9 +480,18 @@ const VideoPlayer = () => {
     else navigate("/");
   }, [navigate]);
 
-  const otherSourceId = sourceId === "vidnest" ? "viduki" : "vidnest";
+  const otherSourceId =
+    sourceId === "vidnest"
+      ? "viduki"
+      : sourceId === "vidsrc"
+        ? "vidnest"
+        : "vidnest";
   const otherSourceLabel =
-    otherSourceId === "vidnest" ? "Server List 2" : "Server List 1";
+    otherSourceId === "vidnest"
+      ? "Server List 2"
+      : otherSourceId === "vidsrc"
+        ? "Server List 3"
+        : "Server List 1";
   const currentSourceFailed =
     failedSources.has(sourceId) || Boolean(sourceError);
   const bothSourcesFailed =
@@ -477,33 +501,56 @@ const VideoPlayer = () => {
     switchSourceList(otherSourceId);
   }, [otherSourceId, switchSourceList]);
 
+  const isEmbed = source?.type === "embed";
+
   return (
     <>
       <title>
         {metadata?.title ? `${metadata.title} · WatchAll` : "WatchAll"}
       </title>
-      <WatchPlayer
-        source={source}
-        sourceLoading={sourceLoading}
-        sourceError={sourceError}
-        loadingMessage={loadingMessage}
-        metadata={metadata}
-        originalLanguage={metadata?.originalLanguage || ""}
-        mediaId={`movie-${id}`}
-        initialTime={initialTime}
-        servers={sourceServers}
-        serversReady={serversReady}
-        activeServer={activeServer}
-        switchingServer={switching}
-        onSelectServer={switchServer}
-        onRetrySource={handleRetrySource}
-        onTryOtherSource={handleTryOtherSource}
-        otherSourceLabel={otherSourceLabel}
-        bothSourcesFailed={bothSourcesFailed}
-        onBack={handleBack}
-        onFatalPlaybackError={handleFatalPlaybackError}
-        notice={notice}
-      />
+      {isEmbed ? (
+        <div className="wa-embed-player">
+          {sourceLoading ? (
+            <div className="wa-player-loading">{loadingMessage || "Loading…"}</div>
+          ) : sourceError ? (
+            <div className="wa-player-error">
+              <h2>{sourceError.title || "Unable to load the video"}</h2>
+              <p>{sourceError.message || "Try another server list."}</p>
+            </div>
+          ) : (
+            <iframe
+              src={source.streamUrl}
+              title={metadata?.title || "VidSrc player"}
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+              allowFullScreen
+              style={{ width: "100%", height: "100%", border: 0, background: "#000" }}
+            />
+          )}
+        </div>
+      ) : (
+        <WatchPlayer
+          source={source}
+          sourceLoading={sourceLoading}
+          sourceError={sourceError}
+          loadingMessage={loadingMessage}
+          metadata={metadata}
+          originalLanguage={metadata?.originalLanguage || ""}
+          mediaId={`movie-${id}`}
+          initialTime={initialTime}
+          servers={sourceServers}
+          serversReady={serversReady}
+          activeServer={activeServer}
+          switchingServer={switching}
+          onSelectServer={switchServer}
+          onRetrySource={handleRetrySource}
+          onTryOtherSource={handleTryOtherSource}
+          otherSourceLabel={otherSourceLabel}
+          bothSourcesFailed={bothSourcesFailed}
+          onBack={handleBack}
+          onFatalPlaybackError={handleFatalPlaybackError}
+          notice={notice}
+        />
+      )}
     </>
   );
 };
