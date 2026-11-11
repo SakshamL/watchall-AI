@@ -1514,3 +1514,28 @@ How it was verified:
 - Local /api/extract?source=server3 returns 200 with a valid VidSrc embed URL
   for a movie (Jawan -> tt15354916) and a TV episode (1399/1/1).
 - Consumet endpoint tested directly and confirmed dead (HTTP 301 -> DMCA page).
+
+---
+
+Date: 2026-11-11
+Area: VidSrc / embed playback (native)
+
+Issue or feature:
+Server List 3 (VidSrc) showed "video format is not supported" on the player
+screen because the native client tried to play the embed URL as an HLS stream
+through ExoPlayer (the proxy wrapped the HTML page and ExoPlayer rejected it).
+
+What changed and how it works now:
+- WatchAllApi now recognises type "embed": it keeps the raw embed URL
+  (no proxy), sets type to "embed", and builds no variants.
+- TvPlayerScreen and PlayerScreen already render a WebView when
+  stream.type == "embed", so VidSrc now plays inside the WebView instead of
+  ExoPlayer.
+- Web was already rendering an iframe for embed streams.
+
+Files affected:
+native/core/src/main/java/com/watchall/core/net/WatchAllApi.kt
+
+How it was verified:
+- :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.
+- npm run build succeeds.

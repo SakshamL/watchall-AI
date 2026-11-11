@@ -224,15 +224,16 @@ class WatchAllApi(
         if (type.isBlank()) type = inferType(originalUrl)
         if (type.isBlank()) type = sniffType(originalUrl)
         if (type.isBlank()) type = "hls"
+        val isEmbed = type == "embed"
 
-        val variants = buildVariants(dto, referer)
+        val variants = if (isEmbed) emptyList() else buildVariants(dto, referer)
         val captionsUrl = dto.captionsUrl?.let { resolveRelative(it) } ?: ""
         val captions = dto.captions.mapNotNull { toCaptionTrack(it, referer) }
 
         StreamResult(
-            playbackUrl = proxyUrl(originalUrl, type, referer),
+            playbackUrl = if (isEmbed) originalUrl else proxyUrl(originalUrl, type, referer),
             originalUrl = originalUrl,
-            type = type,
+            type = if (isEmbed) "embed" else type,
             server = dto.server,
             source = source,
             referer = referer,
@@ -367,6 +368,7 @@ class WatchAllApi(
             "hls", "m3u8" -> "hls"
             "dash", "mpd" -> "dash"
             "mp4", "video" -> "mp4"
+            "embed" -> "embed"
             else -> ""
         }
     }
