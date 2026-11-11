@@ -1483,3 +1483,34 @@ How it was verified:
 - Web: npm run build succeeds.
 - Native: :tv:assembleRelease and :mobile:assembleRelease finished with
   BUILD SUCCESSFUL (TV 2.70 MB, phone 2.81 MB).
+
+---
+
+Date: 2026-11-11
+Area: Stream sources (server)
+
+Issue or feature:
+Attempted to replace Server List 3 (VidSrc embed) with a Consumet/FlixHQ-based
+raw HLS source, as requested.
+
+What changed and how it works now:
+- Consumet's hosted API (api.consumet.org) is unavailable: the upstream
+  repository (consumet/api.consumet.org) is disabled due to a DMCA takedown
+  notice, so the API returns a redirect to a GitHub "repository unavailable"
+  page and the extraction failed with HTTP 451/301.
+- Server List 3 was therefore reverted to the VidSrc embed implementation
+  (type "embed", plays in an iframe/WebView), which is the working option.
+  The Consumet extraction code was removed; no Consumet/FlixHQ references remain
+  in the codebase or UI.
+- The neutral "server3" source key and the embed rendering path (web iframe,
+  native WebView) stay in place, so a working raw-HLS provider can be slotted in
+  later without UI changes.
+
+Files affected:
+server/index.js
+
+How it was verified:
+- node --check passes.
+- Local /api/extract?source=server3 returns 200 with a valid VidSrc embed URL
+  for a movie (Jawan -> tt15354916) and a TV episode (1399/1/1).
+- Consumet endpoint tested directly and confirmed dead (HTTP 301 -> DMCA page).
