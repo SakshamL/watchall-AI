@@ -801,8 +801,6 @@ private fun PlayerLoadingOverlay(
             Text(
                 text = if (state.sourceList == SourceList.SERVER_TWO) {
                     "Server List 2 can take up to 30 seconds to find a stream."
-                } else if (state.sourceList == SourceList.SERVER_THREE) {
-                    "Server List 3 can take up to 30 seconds to find a stream."
                 } else {
                     "Choosing the best available player. This usually takes a few seconds."
                 },
@@ -975,7 +973,6 @@ private fun PlayerSheetContent(
                         subtitle = when (source) {
                             SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
                             SourceList.SERVER_TWO -> "Alternative"
-                            SourceList.SERVER_THREE -> "VegaMovies � streaming"
                         },
                         selected = state.sourceList == source,
                         enabled = true,

@@ -20,14 +20,12 @@ enum class SourceList(
     val supportsTv: Boolean,
 ) {
     SERVER_ONE("viduki", "Server List 1", "Recommended", true),
-    SERVER_TWO("vidnest", "Server List 2", "Alternative", false),
-    SERVER_THREE("vegamovies", "Server List 3", "VegaMovies", true);
+    SERVER_TWO("vidnest", "Server List 2", "Alternative", false);
 
     companion object {
         fun fromApi(value: String?): SourceList =
             when (value) {
                 SERVER_TWO.apiId -> SERVER_TWO
-                SERVER_THREE.apiId -> SERVER_THREE
                 else -> SERVER_ONE
             }
 

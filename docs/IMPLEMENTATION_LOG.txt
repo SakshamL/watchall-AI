@@ -1383,3 +1383,52 @@ How it was verified:
 - The emulator playback failure could not be reproduced locally (no device);
   the added error-code logging and UI are intended to capture the exact code on
   the next run.
+---
+
+Date: 2026-11-11
+Area: Stream sources (all platforms)
+
+Issue or feature:
+VegaMovies ("Server List 3") was unreliable. Its site moves to a new domain
+every few months, its embedded player did not run inside the hosted browser, so
+extraction kept failing with "No stream found on VegaMovies page." It was also
+the slowest option and the only one that could occasionally pick the wrong film.
+
+What changed and how it works now:
+- Removed VegaMovies completely from the web app, the Android phone app, the
+  Android TV app, and the server.
+- The server's /api/extract endpoint now accepts only two sources: "viduki"
+  (Server List 1) and "vidnest" (Server List 2). Any older link or saved
+  preference that still asks for source 3 or "vegamovies" simply falls back to
+  Server List 1 instead of erroring.
+- The whole VegaMovies scraper (browser launch, iframe sniffing, title matching,
+  TMDB lookup) was deleted from server/index.js, which is now about 300 lines
+  smaller and starts faster.
+- The source list on every platform now shows exactly two options. All the
+  VegaMovies-only labels, hints, loading messages and error text are gone.
+- Automatic fallback between the two remaining lists still works, and every
+  stream still plays through the server proxy as before.
+
+Files affected:
+server/index.js
+src/Components/Player/playerUtils.js
+src/Pages/VideoPlayer.jsx
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/util/UiText.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/SourcePickerDialog.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvSourcePickerDialog.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+native/.gitignore
+
+How it was verified:
+- Searched the whole project (web, phone, TV, server) for "vegamovies",
+  "VegaMovies", "SERVER_THREE" and "Server List 3" and found no remaining
+  references outside this log.
+- server/index.js passes `node --check` with no syntax errors.
+- The web app builds cleanly with `npm run build`.
+- Both Android apps build cleanly offline:
+  `:tv:assembleRelease` and `:mobile:assembleRelease` finished with
+  BUILD SUCCESSFUL. The signed TV release APK is 2.70 MB and the phone release
+  APK is 2.81 MB.

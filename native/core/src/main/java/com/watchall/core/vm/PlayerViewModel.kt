@@ -161,10 +161,6 @@ class PlayerViewModel(
             switchList(SourceList.SERVER_TWO)
             return
         }
-        if (name.equals("VegaMovies", ignoreCase = true)) {
-            switchList(SourceList.SERVER_THREE)
-            return
-        }
         if (name == current.activeServer && !current.loading) {
             _state.value = current.copy(
                 notice = PlayerNotice(text = "Already playing from ${UiText.sourceName(name)}."),
@@ -286,7 +282,6 @@ class PlayerViewModel(
     private fun loadingMessage(source: SourceList, server: String?): String {
         return when {
             source == SourceList.SERVER_TWO -> "Trying Server List 2…"
-            source == SourceList.SERVER_THREE -> "Trying Server List 3…"
             !server.isNullOrBlank() -> "Opening ${UiText.sourceName(serverLabel(server))}…"
             else -> "Finding your stream…"
         }
@@ -323,7 +318,6 @@ class PlayerViewModel(
                 )
                 val active = when {
                     nextSource == SourceList.SERVER_TWO -> "Vidnest"
-                    nextSource == SourceList.SERVER_THREE -> "VegaMovies"
                     !stream.server.isNullOrBlank() -> stream.server
                     else -> server
                 }
