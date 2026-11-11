@@ -1319,9 +1319,9 @@ app.get("/api/media-info", async (req, res) => {
 app.use("/api/proxy", (req, res, next) => {
   if (req.method !== "GET") return next();
   handleProxy(req, res).catch((error) => {
-    console.error("[proxy] Error:", error.message);
+    console.error("[proxy] Error:", error.code || error.message, error.message);
     if (!res.headersSent) {
-      res.status(502).json({ error: "Proxy failed" });
+      res.status(502).json({ error: "Proxy failed", details: error.code || error.message });
     } else {
       res.end();
     }
@@ -1370,8 +1370,8 @@ async function handleProxy(req, res) {
         ...refererHeaders,
         "Accept-Encoding": "identity",
       },
-      httpAgent,
-      httpsAgent,
+      httpAgent: new http.Agent({ keepAlive: false }),
+      httpsAgent: new https.Agent({ keepAlive: false }),
       validateStatus: (status) => status >= 200 && status < 300,
       maxRedirects: 5,
       maxContentLength: 12 * 1024 * 1024,
@@ -1431,8 +1431,8 @@ async function handleProxy(req, res) {
       responseType: "stream",
       timeout: 35000,
       headers: upstreamHeaders,
-      httpAgent,
-      httpsAgent,
+      httpAgent: new http.Agent({ keepAlive: false }),
+      httpsAgent: new https.Agent({ keepAlive: false }),
       validateStatus: () => true,
       maxRedirects: 5,
       decompress: false,
