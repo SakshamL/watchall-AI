@@ -98,6 +98,38 @@ async function getBrowser() {
   return puppeteer.launch(localLaunchOptions());
 }
 
+// Temporary diagnostic endpoint (no secrets are returned).
+app.get("/api/diag", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const token = String(process.env.BROWSERLESS_TOKEN || "").trim();
+  const info = {
+    vercel: !!process.env.VERCEL,
+    browserlessConfigured: !!token,
+    browserlessHost: (() => {
+      try {
+        return new URL(BROWSERLESS_URL).host;
+      } catch {
+        return "";
+      }
+    })(),
+  };
+  if (req.query.connect === "1") {
+    let browser = null;
+    try {
+      browser = await getBrowser();
+      info.connect = "ok";
+    } catch (error) {
+      info.connect = "failed";
+      info.error = redactSecret(error?.message || String(error));
+    } finally {
+      try {
+        browser?.disconnect?.();
+      } catch {}
+    }
+  }
+  res.json(info);
+});
+
 // ─── Short-lived extraction cache ────────────────────────────────────────────
 // Switching servers used to relaunch the whole extraction every time. Caching
 // the result for a few minutes makes switching back to a server instant while
