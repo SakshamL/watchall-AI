@@ -96,6 +96,8 @@ const readResumeEntries = () => {
       .map((key) => {
         const rawId = key.slice(prefix.length);
         const id = rawId.replace(/^movie-/, "");
+        // TV resume keys include the season and episode; they are not movie ids.
+        if (!/^\d+$/.test(id)) return null;
         try {
           const value = JSON.parse(window.localStorage.getItem(key));
           const position = Number(value?.position);

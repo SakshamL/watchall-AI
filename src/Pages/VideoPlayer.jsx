@@ -61,11 +61,22 @@ const sourceForData = (data, { sourceId, server = null, forceProxy = false }) =>
   preferDash: data.type === "dash",
 });
 
-const VideoPlayer = () => {
+const VideoPlayer = ({ mediaType = "movie" }) => {
   const { id } = useParams();
+  const isTv = mediaType === "tv";
   const tmdbId = String(id ?? "").match(/\d+/)?.[0] || String(id ?? "").trim();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const requestedSeason = Number(searchParams.get("season"));
+  const requestedEpisode = Number(searchParams.get("episode"));
+  const season =
+    Number.isFinite(requestedSeason) && requestedSeason > 0 ? requestedSeason : 1;
+  const episode =
+    Number.isFinite(requestedEpisode) && requestedEpisode > 0
+      ? requestedEpisode
+      : 1;
+  // Each episode keeps its own resume point and player state.
+  const mediaId = isTv ? `tv-${id}-s${season}e${episode}` : `movie-${id}`;
   const urlSourceValue = searchParams.get("source");
   const urlSource =
     urlSourceValue === "vidnest" || urlSourceValue === "2"
@@ -126,12 +137,12 @@ const VideoPlayer = () => {
   useEffect(() => {
     setFailedSources(new Set());
     listSwitchRef.current = "";
-  }, [id]);
+  }, [mediaId]);
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    const stored = readStore(resumeKey(id), null);
+    const stored = readStore(resumeKey(mediaId), null);
     const startAt = Number(stored?.position);
 
     const pendingServer =
@@ -165,7 +176,9 @@ const VideoPlayer = () => {
     const start = async () => {
       let details = null;
       try {
-        details = await movieAPI.getMovieDetails(tmdbId);
+        details = isTv
+          ? await movieAPI.getTvDetails(tmdbId)
+          : await movieAPI.getMovieDetails(tmdbId);
       } catch {
         details = null;
       }
@@ -198,23 +211,27 @@ const VideoPlayer = () => {
               )
             )}`
           : "";
+      const episodeParam = isTv ? `&season=${season}&episode=${episode}` : "";
 
       try {
-        const prefetched = pendingServer
-          ? null
-          : consumePrefetchedStream(
-              prefetchKey({
-                mediaId: tmdbId,
-                mediaType: "movie",
-                source: sourceId,
-                language: lang,
-              })
-            );
+        // TV prefetch is skipped on purpose: a card does not know which episode
+        // the visitor will pick, so a series-wide prefetch would be wrong.
+        const prefetched =
+          pendingServer || isTv
+            ? null
+            : consumePrefetchedStream(
+                prefetchKey({
+                  mediaId: tmdbId,
+                  mediaType: "movie",
+                  source: sourceId,
+                  language: lang,
+                })
+              );
 
         let data = prefetched;
         if (!data) {
           const response = await fetch(
-            `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=${sourceId}${serverParam}${langParam}${titleParam}`,
+            `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=${mediaType}&source=${sourceId}${serverParam}${langParam}${titleParam}${episodeParam}`,
             { signal: controller.signal }
           );
           try {
@@ -269,7 +286,17 @@ const VideoPlayer = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [clearSourceFailed, id, markSourceFailed, retryToken, sourceId]);
+  }, [
+    clearSourceFailed,
+    episode,
+    id,
+    isTv,
+    markSourceFailed,
+    mediaType,
+    retryToken,
+    season,
+    sourceId,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -321,11 +348,11 @@ const VideoPlayer = () => {
       else if (nextSource === "netnaija") params.set("source", "3");
       else params.delete("source");
       const query = params.toString();
-      navigate(`/movie/${id}/watch${query ? `?${query}` : ""}`, {
+      navigate(`/${mediaType}/${id}/watch${query ? `?${query}` : ""}`, {
         replace: true,
       });
     },
-    [id, navigate]
+    [id, mediaType, navigate]
   );
 
   const switchServer = useCallback(
@@ -370,10 +397,11 @@ const VideoPlayer = () => {
 
       const lang = languageRef.current;
       const langParam = lang ? `&lang=${encodeURIComponent(lang)}` : "";
+      const episodeParam = isTv ? `&season=${season}&episode=${episode}` : "";
 
       try {
         const response = await fetch(
-          `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=viduki&srv=${encodeURIComponent(name)}${langParam}`,
+          `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=${mediaType}&source=viduki&srv=${encodeURIComponent(name)}${langParam}${episodeParam}`,
           { signal: controller.signal }
         );
         let data = null;
@@ -421,7 +449,18 @@ const VideoPlayer = () => {
         }
       }
     },
-    [activeServer, clearSourceFailed, id, selectSource, sourceId, switching]
+    [
+      activeServer,
+      clearSourceFailed,
+      episode,
+      id,
+      isTv,
+      mediaType,
+      season,
+      selectSource,
+      sourceId,
+      switching,
+    ]
   );
 
   const switchSourceList = useCallback(
@@ -572,7 +611,7 @@ const VideoPlayer = () => {
           loadingMessage={loadingMessage}
           metadata={metadata}
           originalLanguage={metadata?.originalLanguage || ""}
-          mediaId={`movie-${id}`}
+          mediaId={mediaId}
           initialTime={initialTime}
           servers={sourceServers}
           serversReady={serversReady}

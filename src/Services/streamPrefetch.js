@@ -172,7 +172,12 @@ export function useStreamPrefetch(mediaId, mediaType = "movie", language = "") {
   const cancelRef = useRef(null);
   useEffect(() => {
     const element = ref.current;
-    if (!element || !mediaId || typeof IntersectionObserver === "undefined") {
+    if (
+      !element ||
+      !mediaId ||
+      mediaType === "tv" ||
+      typeof IntersectionObserver === "undefined"
+    ) {
       return undefined;
     }
 
@@ -207,7 +212,7 @@ export function useStreamPrefetch(mediaId, mediaType = "movie", language = "") {
       cancelRef.current?.();
       cancelRef.current = null;
     };
-  }, [language, mediaId]);
+  }, [language, mediaId, mediaType]);
 
   return ref;
 }

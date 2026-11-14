@@ -21,7 +21,7 @@ const RouteFallback = () => (
 
 function App() {
   const { pathname } = useLocation();
-  const isWatchRoute = /^\/movie\/[^/]+\/watch\/?$/.test(pathname);
+  const isWatchRoute = /^\/(movie|tv)\/[^/]+\/watch\/?$/.test(pathname);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -53,6 +53,10 @@ function App() {
             <Route path="/movie/:id/:title" element={<Movies />} />
             <Route path="/tv/:id" element={<TVShows />} />
             <Route path="/movie/:id/watch" element={<VideoPlayer />} />
+            <Route
+              path="/tv/:id/watch"
+              element={<VideoPlayer mediaType="tv" />}
+            />
           </Routes>
         </Suspense>
       </div>

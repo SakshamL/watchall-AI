@@ -268,6 +268,18 @@ export const movieAPI = {
 
   getCert: (id = "") => fetchFromTMDB(`/movie/${id}/release_dates`, ``),
 
+  getVideos: (id = "") =>
+    fetchFromTMDB(`/movie/${id}/videos`, `&language=en-US`),
+
+  getTvDetails: (id = "") => fetchFromTMDB(`/tv/${id}`, ``),
+
+  getTvCast: (id = "") => fetchFromTMDB(`/tv/${id}/credits`, ``),
+
+  getTvCert: (id = "") => fetchFromTMDB(`/tv/${id}/content_ratings`, ``),
+
+  getTvVideos: (id = "") =>
+    fetchFromTMDB(`/tv/${id}/videos`, `&language=en-US`),
+
   getGenres: () => fetchFromTMDB(`/genre/movie/list`, `&language=en`),
 
   searchMovies: async (query = "") => {

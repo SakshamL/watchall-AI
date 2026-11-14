@@ -1656,3 +1656,56 @@ How it was verified:
   for Game of Thrones (TV, season 1 episode 1).
 - Live Server List 2 returned HTTP 200 for Fight Club and Pathaan.
 - Live Server List 3 returned HTTP 200 for Teen Wolf (TV).
+
+---
+
+Date: 2026-11-14
+Area: Web app - movie details responsive design and TV show details page
+
+Issue or feature:
+The movie details page looked broken on phones and tablets: the poster, title
+and buttons overlapped, the full-bleed backdrop math pushed content off screen,
+and the cast cards ran together. At the same time, opening any TV show on the
+web app showed an empty page, because src/Pages/TVShows.jsx was almost entirely
+commented out.
+
+What changed and how it works now:
+- Movie details: rebuilt the hero as a self-contained, responsive card. The
+  backdrop, poster, title, tagline, rating, year, certification, runtime and
+  genres now stack cleanly on phones and sit side by side on tablets and
+  desktops. Play Now, Trailer and Watchlist no longer overlap the poster. The
+  synopsis and cast sit in the main column, with a sticky "Details" card on
+  the side. Cast cards were fixed to use a stable 2:3 image and to clip their
+  text instead of overflowing into the next row.
+- TV shows: implemented a full details page that mirrors the movie layout
+  (backdrop, poster, title, tagline, rating, year, certification, seasons and
+  episodes, runtime per episode, genres, synopsis, cast, trailer, Play Now).
+  A season and episode picker is included so any episode can be played. The
+  /tv route now also shows a browsable grid of trending and top-rated series.
+- TV playback: added the /tv/:id/watch route and made the shared player handle
+  TV shows. It now reads TMDB TV details, sends type=tv with season and episode
+  to the extractor, and saves resume progress per episode. Prefetch is skipped
+  for TV cards because the exact episode is not known in advance.
+- All changes are web-only; the native mobile and TV apps were not touched.
+
+Files affected:
+src/Pages/Movies.jsx
+src/Pages/TVShows.jsx
+src/Pages/VideoPlayer.jsx
+src/App.jsx
+src/Services/api.jsx
+src/Services/mediaDetails.js (new)
+src/Services/streamPrefetch.js
+src/Sections/HomeRows.jsx
+src/Components/CastCard.jsx
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- npm run build succeeds.
+- Headless Chromium screenshots and audits at 390, 768 and 1440 px widths show
+  no horizontal overflow and Play Now, the title and cast are all visible on
+  the movie and TV details pages.
+- No console errors on the movie, TV details, TV browse or TV watch pages.
+- TV playback tested through Server List 1 (Viduki) on Game of Thrones
+  (season 1, episode 1) and returned a working stream.
+- The dev server and proxy server both ran during verification.
