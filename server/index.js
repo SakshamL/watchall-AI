@@ -74,7 +74,10 @@ async function getBrowser() {
   if (endpoint) {
     console.log("[browser] Connecting to Browserless");
     try {
-      const mod = await import("puppeteer");
+      // Vercel installs only declared dependencies, so the hosted path must use
+      // puppeteer-core (which is in package.json). The local path below still
+      // uses puppeteer-extra + the full puppeteer install in server/node_modules.
+      const mod = await import("puppeteer-core");
       const puppeteer = mod.default || mod;
       return await puppeteer.connect({ browserWSEndpoint: endpoint });
     } catch (error) {
