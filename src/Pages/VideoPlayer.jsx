@@ -49,7 +49,11 @@ const sourceForData = (data, { sourceId, server = null, forceProxy = false }) =>
   type: data.type,
   server: data.server || server || null,
   referer: data.referer || "",
-  forceProxy: !!data.forceProxy || forceProxy || sourceId === "vidnest",
+  forceProxy:
+    !!data.forceProxy ||
+    forceProxy ||
+    sourceId === "vidnest" ||
+    sourceId === "netnaija",
   candidates: buildStreamCandidates(data),
   streams: Array.isArray(data.streams) ? data.streams : [],
   captions: Array.isArray(data.captions) ? data.captions : [],
@@ -66,8 +70,12 @@ const VideoPlayer = () => {
   const urlSource =
     urlSourceValue === "vidnest" || urlSourceValue === "2"
       ? "vidnest"
-      : urlSourceValue === "vidsrc" || urlSourceValue === "4"
-        ? "vidsrc"
+      : urlSourceValue === "netnaija" ||
+          urlSourceValue === "server3" ||
+          urlSourceValue === "vidsrc" ||
+          urlSourceValue === "3" ||
+          urlSourceValue === "4"
+        ? "netnaija"
         : "viduki";
   const [sourceId, setSourceId] = useState(urlSource);
   const [metadata, setMetadata] = useState(null);
@@ -144,13 +152,13 @@ const VideoPlayer = () => {
       switchingList
         ? sourceId === "vidnest"
           ? "Trying Server List 2…"
-          : sourceId === "vidsrc"
+          : sourceId === "netnaija"
             ? "Trying Server List 3…"
             : "Trying Server List 1…"
         : sourceId === "vidnest"
           ? "Getting your stream ready…"
-          : sourceId === "vidsrc"
-            ? "Getting your stream ready…"
+          : sourceId === "netnaija"
+            ? "Matching this title on Netnaija…"
             : pendingServer
     );
 
@@ -176,6 +184,20 @@ const VideoPlayer = () => {
       const serverParam = pendingServer
         ? `&srv=${encodeURIComponent(pendingServer)}`
         : "";
+      // Netnaija matches on the canonical title and release year. The server can
+      // read both from TMDB, but sending what this page already has avoids a
+      // second TMDB request and keeps the match exact.
+      const titleParam =
+        sourceId === "netnaija" && details
+          ? `&title=${encodeURIComponent(
+              details.title || details.name || ""
+            )}&year=${encodeURIComponent(
+              String(details.release_date || details.first_air_date || "").slice(
+                0,
+                4
+              )
+            )}`
+          : "";
 
       try {
         const prefetched = pendingServer
@@ -192,7 +214,7 @@ const VideoPlayer = () => {
         let data = prefetched;
         if (!data) {
           const response = await fetch(
-            `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=${sourceId}${serverParam}${langParam}`,
+            `/api/extract?tmdb=${encodeURIComponent(tmdbId)}&type=movie&source=${sourceId}${serverParam}${langParam}${titleParam}`,
             { signal: controller.signal }
           );
           try {
@@ -207,7 +229,9 @@ const VideoPlayer = () => {
                 data,
                 sourceId === "vidnest"
                   ? "Server List 2 could not find a playable stream. Try Server List 1 or choose another server."
-                  : "Server List 1 could not find a playable stream. Try Server List 2, try again, or choose a specific server."
+                  : sourceId === "netnaija"
+                    ? "Server List 3 could not find this title. Try Server List 1 or Server List 2."
+                    : "Server List 1 could not find a playable stream. Try Server List 2, try again, or choose a specific server."
               )
             );
           }
@@ -219,8 +243,8 @@ const VideoPlayer = () => {
           data.server ||
             (sourceId === "vidnest"
               ? "Vidnest"
-              : sourceId === "vidsrc"
-                ? "VidSrc"
+              : sourceId === "netnaija"
+                ? "Netnaija"
                 : null)
         );
         setSourceError(null);
@@ -294,7 +318,7 @@ const VideoPlayer = () => {
     (nextSource) => {
       const params = new URLSearchParams(window.location.search);
       if (nextSource === "vidnest") params.set("source", "2");
-      else if (nextSource === "vidsrc") params.set("source", "4");
+      else if (nextSource === "netnaija") params.set("source", "3");
       else params.delete("source");
       const query = params.toString();
       navigate(`/movie/${id}/watch${query ? `?${query}` : ""}`, {
@@ -324,11 +348,11 @@ const VideoPlayer = () => {
         selectSource("vidnest");
         return;
       }
-      if (name === "VidSrc") {
-        if (sourceId === "vidsrc") return;
+      if (name === "Netnaija") {
+        if (sourceId === "netnaija") return;
         preferredServerRef.current = "";
-        setSourceId("vidsrc");
-        selectSource("vidsrc");
+        setSourceId("netnaija");
+        selectSource("netnaija");
         return;
       }
 
@@ -414,7 +438,9 @@ const VideoPlayer = () => {
       setLoadingMessage(
         nextSource === "vidnest"
           ? "Trying Server List 2…"
-          : "Trying Server List 1…"
+          : nextSource === "netnaija"
+            ? "Trying Server List 3…"
+            : "Trying Server List 1…"
       );
       setSourceId(nextSource);
       selectSource(nextSource);
@@ -437,14 +463,30 @@ const VideoPlayer = () => {
         group: "Server List 2",
       },
     ];
-    if (sourceId === "vidnest") return [...vidnest, ...viduki];
-    return [...viduki, ...vidnest];
+    const netnaija = [
+      {
+        name: "Netnaija",
+        label: "Server List 3",
+        language: "",
+        mp4: true,
+        upscale: false,
+        group: "Server List 3",
+      },
+    ];
+    if (sourceId === "vidnest") return [...vidnest, ...viduki, ...netnaija];
+    if (sourceId === "netnaija") return [...netnaija, ...viduki, ...vidnest];
+    return [...viduki, ...vidnest, ...netnaija];
   }, [servers, sourceId]);
 
   const handleFatalPlaybackError = useCallback(
     (error, failedSource) => {
       markSourceFailed(sourceId);
-      if (autoFallbackRef.current || sourceId === "vidnest") return;
+      if (
+        autoFallbackRef.current ||
+        sourceId === "vidnest" ||
+        sourceId === "netnaija"
+      )
+        return;
       if (activeServer) return;
       const listServers = servers.filter(
         (item) => item.group === "Server List 1"
@@ -480,16 +522,11 @@ const VideoPlayer = () => {
     else navigate("/");
   }, [navigate]);
 
-  const otherSourceId =
-    sourceId === "vidnest"
-      ? "viduki"
-      : sourceId === "vidsrc"
-        ? "vidnest"
-        : "vidnest";
+  const otherSourceId = sourceId === "vidnest" ? "viduki" : "vidnest";
   const otherSourceLabel =
     otherSourceId === "vidnest"
       ? "Server List 2"
-      : otherSourceId === "vidsrc"
+      : otherSourceId === "netnaija"
         ? "Server List 3"
         : "Server List 1";
   const currentSourceFailed =
@@ -520,7 +557,7 @@ const VideoPlayer = () => {
           ) : (
             <iframe
               src={source.streamUrl}
-              title={metadata?.title || "VidSrc player"}
+              title={metadata?.title || "Stream player"}
               allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
               allowFullScreen
               style={{ width: "100%", height: "100%", border: 0, background: "#000" }}

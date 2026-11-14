@@ -13,7 +13,8 @@ object UiText {
         if (name.isNullOrBlank()) return "Auto"
         return when (name.lowercase()) {
             "vidnest" -> SourceList.SERVER_TWO.displayName
-            "vidsrc" -> SourceList.SERVER_THREE.displayName
+            "netnaija", "server3", "vidsrc", "consumet", "flixhq" ->
+                SourceList.SERVER_THREE.displayName
             "viduki" -> SourceList.SERVER_ONE.displayName
             else -> name
         }
@@ -23,6 +24,8 @@ object UiText {
         message
             .replace("Vidnest", SourceList.SERVER_TWO.displayName, ignoreCase = true)
             .replace("Viduki", SourceList.SERVER_ONE.displayName, ignoreCase = true)
+            .replace("Netnaija", SourceList.SERVER_THREE.displayName, ignoreCase = true)
+            .replace("VidSrc", SourceList.SERVER_THREE.displayName, ignoreCase = true)
 
     fun friendlyError(error: Throwable): String {
         val message = when (error) {

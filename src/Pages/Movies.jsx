@@ -382,7 +382,9 @@ function Movies(props) {
           onSelect={(source) => {
             setSourceOpen(false);
             const watchPath = `/movie/${movieDetails.id || id}/watch`;
-            navigate(source === "vidnest" ? `${watchPath}?source=2` : watchPath);
+            const sourceParam =
+              source === "vidnest" ? "?source=2" : source === "netnaija" ? "?source=3" : "";
+            navigate(`${watchPath}${sourceParam}`);
           }}
         />
       </>

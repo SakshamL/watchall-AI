@@ -1036,6 +1036,8 @@ private fun TvPlayerLoading(
             Text(
                 text = if (state.sourceList == SourceList.SERVER_TWO) {
                     "Server List 2 can take up to 30 seconds to find a stream."
+                } else if (state.sourceList == SourceList.SERVER_THREE) {
+                    "Server List 3 matches this exact title on Netnaija."
                 } else {
                     "Selecting the best available player."
                 },
@@ -1224,7 +1226,7 @@ private fun TvPlayerSheetContent(
                         subtitle = when (source) {
                             SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
                             SourceList.SERVER_TWO -> "Alternative · movies only · slower"
-                            SourceList.SERVER_THREE -> "VidSrc · embed player"
+                            SourceList.SERVER_THREE -> "Netnaija · movies and TV shows"
                         },
                         selected = state.sourceList == source,
                         onClick = { onSelectList(source) },

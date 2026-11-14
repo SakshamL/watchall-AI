@@ -123,6 +123,51 @@ function setCachedExtract(key, data) {
   extractCache.set(key, { data, t: Date.now() });
 }
 
+// ─── TMDB metadata ───────────────────────────────────────────────────────────
+// Netnaija only exposes its own subject ids, so the resolver needs the title
+// and release year to pick the correct subject. The clients send a TMDB id, so
+// we read the canonical title/year from TMDB here. Cached for an hour because
+// titles rarely change.
+
+const TMDB_API_KEY =
+  process.env.TMDB_API_KEY || "04c35731a5ee918f014970082a0088b1";
+const TMDB_META_TTL = 60 * 60 * 1000;
+const tmdbMetaCache = new Map();
+
+async function fetchTmdbMeta(tmdb, type) {
+  const kind = type === "tv" ? "tv" : "movie";
+  const cacheKey = `${kind}:${tmdb}`;
+  const hit = tmdbMetaCache.get(cacheKey);
+  if (hit && Date.now() - hit.t < TMDB_META_TTL) return hit.data;
+
+  const url =
+    `https://api.themoviedb.org/3/${kind}/${encodeURIComponent(tmdb)}` +
+    `?api_key=${encodeURIComponent(TMDB_API_KEY)}&language=en-US`;
+  const response = await axios.get(url, {
+    timeout: 12000,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+  const data = response.data || {};
+  const meta = {
+    title: String(
+      kind === "tv"
+        ? data.name || data.original_name || ""
+        : data.title || data.original_title || ""
+    ).trim(),
+    year: String(
+      kind === "tv" ? data.first_air_date || "" : data.release_date || ""
+    ).slice(0, 4),
+    originalLanguage: String(data.original_language || "").trim().toLowerCase(),
+  };
+  if (!meta.title) throw new Error("TMDB did not return a title.");
+
+  if (tmdbMetaCache.size >= 200) {
+    tmdbMetaCache.delete(tmdbMetaCache.keys().next().value);
+  }
+  tmdbMetaCache.set(cacheKey, { t: Date.now(), data: meta });
+  return meta;
+}
+
 // Vidnest extraction takes several seconds (it queries every provider), so
 // concurrent requests for the same title share a single run instead of
 // hammering the provider API.
@@ -587,9 +632,14 @@ app.get("/api/extract", async (req, res) => {
   const source =
     rawSource === "vidnest" || rawSource === "2"
       ? "vidnest"
-      : rawSource === "server3" || rawSource === "consumet" || rawSource === "flixhq" ||
-        rawSource === "vidsrc" || rawSource === "3" || rawSource === "4"
-        ? "server3"
+      : rawSource === "netnaija" ||
+          rawSource === "server3" ||
+          rawSource === "consumet" ||
+          rawSource === "flixhq" ||
+          rawSource === "vidsrc" ||
+          rawSource === "3" ||
+          rawSource === "4"
+        ? "netnaija"
         : "viduki";
   const forcedSrv =
     typeof req.query.srv === "string" ? req.query.srv.trim().replace(/[^A-Za-z]/g, "") : "";
@@ -645,49 +695,136 @@ app.get("/api/extract", async (req, res) => {
     }
   }
 
-  if (source === "server3") {
+  if (source === "netnaija") {
     if (!/^\d{1,10}$/.test(String(tmdb))) {
       return res.status(400).json({ error: "A numeric TMDB id is required." });
     }
-    const cacheKey = `server3:${type}:${tmdb}:${season || ""}:${episode || ""}`;
+
+    const cacheKey = `netnaija:${type}:${tmdb}:${season || ""}:${episode || ""}`;
     const cached = getCachedExtract(cacheKey);
     if (cached) {
-      console.log(`[server3] Cache hit: ${cacheKey}`);
+      console.log(`[netnaija] Cache hit: ${cacheKey}`);
       return res.json(cached);
     }
-    console.log(`[server3] Building embed: tmdb=${tmdb} type=${type} s=${season || "-"} e=${episode || "-"}`);
+
     try {
-      // VidSrc is an embed provider: it only exposes an iframe URL, not a raw
-      // stream. We return that URL as type "embed" so the player renders it in
-      // an iframe/WebView (its own controls). No raw extraction is attempted
-      // because VidSrc protects its streams the same way VegaMovies did, and
-      // browser-based extraction never worked in production on Vercel.
-      let embedUrl;
-      if (type === "tv" && season && episode) {
-        embedUrl = `https://vidsrc.sh/embed/tv/${tmdb}/${season}/${episode}`;
-      } else if (type === "tv") {
-        embedUrl = `https://vidsrc.sh/embed/tv/${tmdb}`;
-      } else {
-        embedUrl = `https://vidsrc.sh/embed/movie/${tmdb}`;
+      // The client may already know the title/year (web sends them), but the
+      // native apps only send the TMDB id. Reading TMDB here keeps both paths
+      // identical and guarantees the title we match against is canonical.
+      const queryTitle =
+        typeof req.query.title === "string" ? req.query.title.trim() : "";
+      const queryYear =
+        typeof req.query.year === "string" ? req.query.year.trim() : "";
+      let meta = { title: queryTitle, year: queryYear, originalLanguage: "" };
+      try {
+        const tmdbMeta = await fetchTmdbMeta(tmdb, type);
+        meta = {
+          title: queryTitle || tmdbMeta.title,
+          year: queryYear || tmdbMeta.year,
+          originalLanguage: tmdbMeta.originalLanguage,
+        };
+      } catch (metaError) {
+        console.warn(
+          `[netnaija] TMDB metadata lookup failed: ${metaError.message}`
+        );
+        if (!meta.title) {
+          return res.status(502).json({
+            error:
+              "Server List 3 could not read this title's details. Try another server list.",
+          });
+        }
       }
-      const data = {
-        streamUrl: embedUrl,
-        type: "embed",
-        server: "Server 3",
-        referer: "",
-        forceProxy: false,
-        candidates: [],
-        streams: [],
-        captions: [],
-        captionsUrl: "",
-        preferDash: false,
-      };
+
+      console.log(
+        `[netnaija] Searching: tmdb=${tmdb} type=${type} title="${meta.title}" year=${meta.year || "-"}`
+      );
+      const items = await searchNetnaija(meta.title);
+      const match = pickNetnaijaMatch(items, {
+        title: meta.title,
+        year: meta.year,
+        mediaType: type,
+      });
+
+      if (!match) {
+        console.log(
+          `[netnaija] No confident match for "${meta.title}" (${meta.year || "?"}) among ${items.length} results`
+        );
+        return res.status(404).json({
+          error:
+            `Server List 3 (Netnaija) doesn't have "${meta.title}"` +
+            `${meta.year ? ` (${meta.year})` : ""}. Try another server list.`,
+        });
+      }
+
+      console.log(
+        `[netnaija] Matched: "${match.title}" (${releaseYearOf(match) || "?"}) slug=${match.detailPath}`
+      );
+
+      const detailData = await fetchNetnaijaDetail(match.detailPath);
+      const subject = detailData.subject;
+      const subjectType = Number(subject.subjectType);
+      const seasons = Array.isArray(detailData.resource?.seasons)
+        ? detailData.resource.seasons
+        : [];
+
+      let se;
+      let ep;
+      if (subjectType === 1) {
+        se = 0;
+        ep = 0;
+      } else {
+        const requestedSe = Number(season);
+        const requestedEp = Number(episode);
+        const seasonNumbers = seasons.map((item) => Number(item.se));
+        se =
+          Number.isFinite(requestedSe) && seasonNumbers.includes(requestedSe)
+            ? requestedSe
+            : seasons.length
+              ? Number(seasons[0].se)
+              : 1;
+        const seasonInfo = seasons.find((item) => Number(item.se) === se);
+        const maxEp = Number(seasonInfo?.maxEp) || 0;
+        ep =
+          Number.isFinite(requestedEp) && requestedEp > 0
+            ? requestedEp
+            : 1;
+        if (maxEp > 0 && ep > maxEp) ep = maxEp;
+      }
+
+      const playData = await fetchNetnaijaPlay({
+        subjectId: subject.subjectId,
+        se,
+        ep,
+        slug: match.detailPath,
+      });
+
+      if (!netnaijaHasPlayable(playData)) {
+        console.log(
+          `[netnaija] No playable stream for "${match.title}" (slug=${match.detailPath})`
+        );
+        return res.status(502).json({
+          error: `Server List 3 found "${match.title}" on Netnaija but no playable stream is available. Try another server list.`,
+        });
+      }
+
+      const data = buildNetnaijaResult({
+        detailData,
+        playData,
+        slug: match.detailPath,
+        se,
+        ep,
+      });
       setCachedExtract(cacheKey, data);
-      console.log(`[server3] Result: ${embedUrl}`);
+      console.log(
+        `[netnaija] Result: type=${data.type} streams=${data.streams.length} hls=${data.hls.length} dash=${data.dash.length}`
+      );
       return res.json(data);
     } catch (error) {
-      console.error(`[server3] Error: ${error.message}`);
-      return res.status(502).json({ error: "Server List 3 could not find a playable stream for this title. Try Server List 1." });
+      console.error(`[netnaija] Error: ${error.message}`);
+      return res.status(502).json({
+        error:
+          "Server List 3 could not find a playable stream for this title. Try another server list.",
+      });
     }
   }
 
@@ -1779,6 +1916,15 @@ function rewriteDashManifest(text, manifestUrl) {
 // it exposes a plain JSON API, so no headless browser is needed: we ask the
 // detail endpoint for the subject id + season list, then the play endpoint for
 // the signed CDN URLs (MP4, and HLS when available).
+//
+// The search endpoint needs an anti-bot token we cannot reproduce reliably, so
+// we read the server-rendered /search-result page instead and decode its Nuxt
+// payload. That returns the same subjects the site shows, with detailPath and
+// releaseDate, which is exactly what strict title/year matching needs.
+
+const NETNAIJA_BASE = "https://netnaija.film";
+const NETNAIJA_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 function netnaijaSlug(input) {
   const raw = String(input || "").trim();
@@ -1793,6 +1939,346 @@ function netnaijaSlug(input) {
   return raw.split("?")[0].split("/").pop() || raw;
 }
 
+function netnaijaJsonHeaders(slug) {
+  return {
+    Accept: "application/json",
+    Referer: slug
+      ? `${NETNAIJA_BASE}/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`
+      : `${NETNAIJA_BASE}/`,
+    "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
+    "User-Agent": NETNAIJA_UA,
+  };
+}
+
+// Decodes Nuxt's flattened `__NUXT_DATA__` array into normal objects.
+function decodeNuxtPayload(html) {
+  const match = String(html || "").match(
+    /<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i
+  );
+  if (!match) return null;
+
+  let arr;
+  try {
+    arr = JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(arr) || !arr.length) return null;
+
+  const cache = new Map();
+  const markers = new Set([
+    "ShallowReactive",
+    "Reactive",
+    "Ref",
+    "ShallowRef",
+    "EmptyRef",
+    "EmptyShallowRef",
+    "Date",
+    "Set",
+    "Map",
+    "BigInt",
+    "RegExp",
+    "NuxtError",
+  ]);
+
+  const resolve = (index) => {
+    if (cache.has(index)) return cache.get(index);
+    const raw = arr[index];
+    if (raw === null || typeof raw !== "object") {
+      cache.set(index, raw);
+      return raw;
+    }
+    if (Array.isArray(raw)) {
+      if (typeof raw[0] === "string" && markers.has(raw[0])) {
+        const target = raw[1];
+        const value = typeof target === "number" ? resolve(target) : target;
+        cache.set(index, value);
+        return value;
+      }
+      const out = [];
+      cache.set(index, out);
+      for (const item of raw) out.push(resolve(item));
+      return out;
+    }
+    const out = {};
+    cache.set(index, out);
+    for (const key of Object.keys(raw)) out[key] = resolve(raw[key]);
+    return out;
+  };
+
+  const rootMarker = arr[0];
+  const rootIndex =
+    Array.isArray(rootMarker) && typeof rootMarker[1] === "number"
+      ? rootMarker[1]
+      : 1;
+  return resolve(rootIndex);
+}
+
+function normalizeTitle(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/['’`]/g, "")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+// Removes tags Netnaija adds around the same title: [Hindi], (2023),
+// "S1-S6", "Season 2", "Complete Series". It never removes meaningful words,
+// so "Jawan 2" stays "jawan 2" and cannot match "Jawan".
+const NETNAIJA_TITLE_SUFFIX =
+  /\b(?:s\d{1,2}(?:\s*[-–]\s*s?\d{1,2})?|season\s*\d+(?:\s*[-–]\s*\d+)?|complete\s+series|full\s+movie)\b/gi;
+
+function cleanNetnaijaTitle(value) {
+  const text = String(value || "")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(NETNAIJA_TITLE_SUFFIX, " ");
+  return normalizeTitle(text);
+}
+
+// Whole-title match: the candidate must contain exactly the same words as the
+// requested title. This is what stops "Jawan" from matching "Jawan 2",
+// "Jawan of Vellimala", "18 Saal Ki Jawan Larki" or a song title.
+function titlesMatch(requested, candidate) {
+  const req = normalizeTitle(requested);
+  const cand = cleanNetnaijaTitle(candidate);
+  if (!req || !cand) return false;
+  if (req === cand) return true;
+
+  const reqTokens = req.split(" ").sort();
+  const candTokens = cand.split(" ").sort();
+  return (
+    reqTokens.length === candTokens.length &&
+    reqTokens.every((token, index) => token === candTokens[index])
+  );
+}
+
+function releaseYearOf(item) {
+  const match = String(item?.releaseDate || "").match(/(\d{4})/);
+  return match ? Number(match[1]) : 0;
+}
+
+function pickNetnaijaMatch(items, { title, year, mediaType }) {
+  const wantedType = mediaType === "tv" ? 2 : 1;
+  const requestedYear = Number(year) || 0;
+  const scored = [];
+
+  for (const item of items) {
+    if (!item || !item.detailPath) continue;
+    if (Number(item.subjectType) !== wantedType) continue;
+    if (item.hasResource === false) continue;
+    if (!titlesMatch(title, item.title)) continue;
+
+    const itemYear = releaseYearOf(item);
+    if (requestedYear && itemYear) {
+      const diff = Math.abs(itemYear - requestedYear);
+      // Regional releases can be a year apart, but a bigger gap usually means
+      // a remake or a different film with the same name.
+      if (diff > 1) continue;
+    }
+
+    const yearDiff =
+      requestedYear && itemYear ? Math.abs(itemYear - requestedYear) : 0;
+    const ratingCount = Number(item.imdbRatingCount) || 0;
+    const rating = Number(item.imdbRatingValue) || 0;
+    const score =
+      100 +
+      (requestedYear && itemYear ? (yearDiff === 0 ? 20 : 10) : 0) +
+      Math.min(10, Math.log10(ratingCount + 1)) +
+      Math.min(5, rating / 2);
+
+    scored.push({ item, score, yearDiff });
+  }
+
+  if (!scored.length) return null;
+
+  // Without a year we cannot tell two same-name titles apart, so only accept a
+  // single unambiguous result.
+  if (!requestedYear) {
+    return scored.length === 1 ? scored[0].item : null;
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.yearDiff !== b.yearDiff) return a.yearDiff - b.yearDiff;
+    return (
+      (Number(b.item.imdbRatingCount) || 0) -
+      (Number(a.item.imdbRatingCount) || 0)
+    );
+  });
+  return scored[0].item;
+}
+
+async function searchNetnaija(keyword) {
+  const url =
+    `${NETNAIJA_BASE}/search-result?keyword=${encodeURIComponent(keyword)}`;
+  const response = await axios.get(url, {
+    headers: {
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "User-Agent": NETNAIJA_UA,
+      Referer: `${NETNAIJA_BASE}/`,
+    },
+    timeout: 20000,
+    maxRedirects: 5,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+  const root = decodeNuxtPayload(response.data);
+  const items = root?.state?.$sresData?.items;
+  return Array.isArray(items) ? items : [];
+}
+
+async function fetchNetnaijaDetail(slug) {
+  const url =
+    `${NETNAIJA_BASE}/wefeed-h5api-bff/detail` +
+    `?detailPath=${encodeURIComponent(slug)}`;
+  const response = await axios.get(url, {
+    headers: netnaijaJsonHeaders(slug),
+    timeout: 20000,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+  const detail = response.data;
+  if (!detail || Number(detail.code) !== 0 || !detail.data?.subject) {
+    throw new Error("Netnaija detail lookup failed.");
+  }
+  return detail.data;
+}
+
+function netnaijaHasPlayable(payload) {
+  if (!payload || Number(payload.code) !== 0 || !payload.data) return false;
+  const { streams, hls, dash } = payload.data;
+  return (
+    (Array.isArray(streams) && streams.length > 0) ||
+    (Array.isArray(hls) && hls.length > 0) ||
+    (Array.isArray(dash) && dash.length > 0)
+  );
+}
+
+async function fetchNetnaijaPlay({ subjectId, se, ep, slug }) {
+  const url =
+    `${NETNAIJA_BASE}/wefeed-h5api-bff/subject/play` +
+    `?subjectId=${encodeURIComponent(subjectId)}` +
+    `&se=${encodeURIComponent(se)}` +
+    `&ep=${encodeURIComponent(ep)}` +
+    `&detailPath=${encodeURIComponent(slug)}`;
+  const headers = netnaijaJsonHeaders(slug);
+
+  let response = await axios.get(url, {
+    headers,
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+  if (netnaijaHasPlayable(response.data)) return response.data;
+
+  // The first request creates an anonymous token cookie and sometimes returns
+  // an empty stream list. Replaying with that cookie returns the real URLs.
+  const setCookie = response.headers?.["set-cookie"];
+  const cookies = (Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [])
+    .map((value) => String(value).split(";")[0].trim())
+    .filter(Boolean);
+  if (cookies.length) {
+    response = await axios.get(url, {
+      headers: { ...headers, Cookie: cookies.join("; ") },
+      timeout: 20000,
+      validateStatus: () => true,
+    });
+  }
+  return response.data;
+}
+
+function buildNetnaijaResult({ detailData, playData, slug, se, ep }) {
+  const subject = detailData.subject;
+  const resource = detailData.resource || {};
+  const seasons = Array.isArray(resource.seasons) ? resource.seasons : [];
+  const subjectType = Number(subject.subjectType); // 1 = movie, 2 = series
+  const play = playData?.data || {};
+
+  const streams = (Array.isArray(play.streams) ? play.streams : [])
+    .filter((stream) => stream && typeof stream.url === "string")
+    .map((stream) => ({
+      ...stream,
+      quality: Number(stream.resolutions) || qualityFromUrl(stream.url) || 0,
+      codec: codecFromUrl(stream.url),
+    }))
+    .sort((a, b) => b.quality - a.quality);
+  const hls = (Array.isArray(play.hls) ? play.hls : []).filter(
+    (item) => item && typeof item.url === "string"
+  );
+  const dash = (Array.isArray(play.dash) ? play.dash : []).filter(
+    (item) => item && typeof item.url === "string"
+  );
+
+  const bestStream = streams[0] || null;
+  const bestStreamUrl = bestStream
+    ? bestStream.url
+    : hls.length
+      ? hls[0].url
+      : dash.length
+        ? dash[0].url
+        : null;
+  const primaryType = bestStream
+    ? "mp4"
+    : hls.length
+      ? "hls"
+      : dash.length
+        ? "dash"
+        : null;
+
+  const candidates = [];
+  const pushCandidate = (type, url, extra = {}) => {
+    if (!url || candidates.some((item) => item.url === url)) return;
+    candidates.push({
+      url,
+      type,
+      quality: extra.quality || qualityFromUrl(url),
+      codec: extra.codec || codecFromUrl(url),
+      verified: true,
+    });
+  };
+  if (bestStreamUrl) pushCandidate(primaryType, bestStreamUrl, bestStream || {});
+  dash.forEach((item) => pushCandidate("dash", item.url));
+  hls.forEach((item) => pushCandidate("hls", item.url));
+  streams.forEach((item) => pushCandidate("mp4", item.url, item));
+
+  const captionsQuery = new URLSearchParams({
+    subjectId: String(subject.subjectId || ""),
+    se: String(se),
+    ep: String(ep),
+    detailPath: slug,
+  });
+  const captionsUrl = `/api/netnaija/captions?${captionsQuery.toString()}`;
+
+  return {
+    source: "netnaija",
+    server: "Netnaija",
+    title: subject.title,
+    subjectId: subject.subjectId,
+    subjectType,
+    detailPath: slug,
+    season: se,
+    episode: ep,
+    seasons,
+    streams,
+    hls,
+    dash,
+    playConfig: play.playConfig || {},
+    captions: Array.isArray(play.captions) ? play.captions : [],
+    referer: `${NETNAIJA_BASE}/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
+    forceProxy: true,
+    // Convenience: best MP4 stream (highest resolution) if any.
+    streamUrl: bestStreamUrl,
+    type: primaryType,
+    candidates,
+    preferDash: dash.length > 0,
+    // Loaded after playback starts so caption discovery never delays video.
+    captionsUrl,
+  };
+}
+
 app.get("/api/netnaija/extract", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const slug = netnaijaSlug(req.query.detailPath || req.query.url || req.query.slug);
@@ -1800,29 +2286,12 @@ app.get("/api/netnaija/extract", async (req, res) => {
     return res.status(400).json({ error: "Missing detailPath (or url/slug) query param." });
   }
 
-  const detailUrl = `https://netnaija.film/wefeed-h5api-bff/detail?detailPath=${encodeURIComponent(slug)}`;
-  const playHeaders = {
-    Accept: "application/json",
-    Referer: `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
-    "x-client-info": JSON.stringify({ timezone: "Asia/Calcutta" }),
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  };
-
   try {
-    const detailRes = await axios.get(detailUrl, {
-      headers: { ...playHeaders },
-      timeout: 20000,
-      validateStatus: (s) => s >= 200 && s < 300,
-    });
-    const detail = detailRes.data;
-    if (!detail || detail.code !== 0 || !detail.data?.subject) {
-      return res.status(502).json({ error: "Netnaija detail lookup failed.", detail });
-    }
-
-    const subject = detail.data.subject;
-    const resource = detail.data.resource || {};
-    const seasons = Array.isArray(resource.seasons) ? resource.seasons : [];
+    const detailData = await fetchNetnaijaDetail(slug);
+    const subject = detailData.subject;
+    const seasons = Array.isArray(detailData.resource?.seasons)
+      ? detailData.resource.seasons
+      : [];
     const subjectType = Number(subject.subjectType); // 1 = movie, 2 = series
 
     let se;
@@ -1844,102 +2313,19 @@ app.get("/api/netnaija/extract", async (req, res) => {
       ep = Number.isFinite(requestedEp) && requestedEp !== null ? requestedEp : 1;
     }
 
-    const playUrl =
-      `https://netnaija.film/wefeed-h5api-bff/subject/play` +
-      `?subjectId=${encodeURIComponent(subject.subjectId)}` +
-      `&se=${encodeURIComponent(se)}` +
-      `&ep=${encodeURIComponent(ep)}` +
-      `&detailPath=${encodeURIComponent(slug)}`;
-
-    const playRes = await axios.get(playUrl, {
-      headers: playHeaders,
-      timeout: 20000,
-      validateStatus: (s) => s >= 200 && s < 300,
+    const playData = await fetchNetnaijaPlay({
+      subjectId: subject.subjectId,
+      se,
+      ep,
+      slug,
     });
-    const play = playRes.data;
-    if (!play || play.code !== 0 || !play.data) {
-      return res.status(502).json({ error: "Netnaija play lookup failed.", play });
+    if (!netnaijaHasPlayable(playData)) {
+      return res.status(502).json({
+        error: "Netnaija found the title but no playable stream is available.",
+      });
     }
 
-    const streams = (Array.isArray(play.data.streams) ? play.data.streams : [])
-      .filter((stream) => stream && typeof stream.url === "string")
-      .map((stream) => ({
-        ...stream,
-        quality:
-          Number(stream.resolutions) || qualityFromUrl(stream.url) || 0,
-        codec: codecFromUrl(stream.url),
-      }))
-      .sort((a, b) => b.quality - a.quality);
-    const hls = (Array.isArray(play.data.hls) ? play.data.hls : []).filter(
-      (item) => item && typeof item.url === "string"
-    );
-    const dash = (Array.isArray(play.data.dash) ? play.data.dash : []).filter(
-      (item) => item && typeof item.url === "string"
-    );
-
-    const bestStream = streams[0] || null;
-    const bestStreamUrl = bestStream
-      ? bestStream.url
-      : hls.length
-        ? hls[0].url
-        : dash.length
-          ? dash[0].url
-          : null;
-    const primaryType = bestStream
-      ? "mp4"
-      : hls.length
-        ? "hls"
-        : dash.length
-          ? "dash"
-          : null;
-
-    const candidates = [];
-    const pushCandidate = (type, url, extra = {}) => {
-      if (!url || candidates.some((item) => item.url === url)) return;
-      candidates.push({
-        url,
-        type,
-        quality: extra.quality || qualityFromUrl(url),
-        codec: extra.codec || codecFromUrl(url),
-        verified: true,
-      });
-    };
-    if (bestStreamUrl) pushCandidate(primaryType, bestStreamUrl, bestStream || {});
-    dash.forEach((item) => pushCandidate("dash", item.url));
-    hls.forEach((item) => pushCandidate("hls", item.url));
-    streams.forEach((item) => pushCandidate("mp4", item.url, item));
-
-    const captionsQuery = new URLSearchParams({
-      subjectId: String(subject.subjectId || ""),
-      se: String(se),
-      ep: String(ep),
-      detailPath: slug,
-    });
-    const captionsUrl = `/api/netnaija/captions?${captionsQuery.toString()}`;
-
-    return res.json({
-      source: "netnaija",
-      title: subject.title,
-      subjectId: subject.subjectId,
-      subjectType,
-      detailPath: slug,
-      season: se,
-      episode: ep,
-      seasons,
-      streams,
-      hls,
-      dash,
-      playConfig: play.data.playConfig || {},
-      captions: Array.isArray(play.data.captions) ? play.data.captions : [],
-      referer: `https://netnaija.film/videoPlayPage/${encodeURIComponent(slug)}?type=/movie/detail`,
-      forceProxy: true,
-      // Convenience: best MP4 stream (highest resolution) if any.
-      streamUrl: bestStreamUrl,
-      type: primaryType,
-      candidates,
-      // Loaded after playback starts so caption discovery never delays video.
-      captionsUrl,
-    });
+    return res.json(buildNetnaijaResult({ detailData, playData, slug, se, ep }));
   } catch (err) {
     console.error("[netnaija] Error:", err.message);
     return res.status(502).json({

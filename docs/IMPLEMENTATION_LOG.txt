@@ -1564,3 +1564,66 @@ native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
 How it was verified:
 - :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.
 - npm run build succeeds.
+
+---
+
+Date: 2026-11-14
+Area: Stream extraction - Server List 3 (Netnaija), web + mobile + TV
+
+Issue or feature:
+Server List 3 was VidSrc, which only offered an embedded player full of ads
+and often did not load. The goal was to make Server List 3 a real stream
+source (Netnaija) on web, mobile and TV, and to stop it from ever playing the
+wrong title (for example, "Jawan" used to play a different film).
+
+What changed and how it works now:
+- Server List 3 now uses Netnaija instead of VidSrc. Its internal name is
+  "netnaija"; old links and saved choices that say "server3", "3", "4",
+  "vidsrc", "consumet" or "flixhq" are redirected to Netnaija automatically.
+- The server looks up the real title and release year on TMDB from the TMDB id
+  the app already sends, then searches Netnaija for that title.
+- Matching is strict: the whole title must match word for word after removing
+  tags like "[Hindi]" and "S1-S6", the type must match (movie or TV show), and
+  the release year must be within one year of the TMDB year. If the year is
+  unknown, only a single unambiguous result is accepted. It never falls back
+  to "first search result", so a missing title now shows a clear
+  "Netnaija doesn't have this title" message instead of the wrong film.
+- Netnaija sometimes answers the first play request with an empty stream list
+  and a temporary token cookie. The server now retries once with that cookie
+  and returns the real signed MP4/HLS/DASH URLs.
+- Streams are always played through the WatchAll proxy (the CDN rejects direct
+  requests) with the required Netnaija referer.
+- Web: the source picker's third entry is "Server List 3 - Netnaija - movies
+  and TV"; the player sends the title/year it already has, shows a clear
+  message when the title is missing, and lists Netnaija in the server menu.
+- Mobile and TV: the source enum now uses "netnaija" for Server List 3, the
+  picker labels and loading messages were updated, and the source name shown
+  in the player is "Server List 3".
+- VidSrc's embed code is still present in the clients but is no longer used by
+  Server List 3.
+
+Files affected:
+server/index.js
+src/Components/SourceSelectModal.jsx
+src/Components/Player/playerUtils.js
+src/Pages/VideoPlayer.jsx
+src/Pages/Movies.jsx
+native/core/src/main/java/com/watchall/core/data/Models.kt
+native/core/src/main/java/com/watchall/core/util/UiText.kt
+native/core/src/main/java/com/watchall/core/vm/PlayerViewModel.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/components/SourcePickerDialog.kt
+native/mobile/src/main/java/com/watchall/mobile/ui/screens/PlayerScreen.kt
+native/tv/src/main/java/com/watchall/tv/ui/components/TvSourcePickerDialog.kt
+native/tv/src/main/java/com/watchall/tv/ui/screens/TvPlayerScreen.kt
+
+How it was verified:
+- Local server: Pathaan (TMDB 864692) returned 1080/720/480/360 MP4 streams;
+  Fight Club (550) returned a stream; Teen Wolf (TV, 34524) matched the
+  "Teen Wolf S1-S6" series and returned streams.
+- Local server: Jawan (872906) and Game of Thrones (1399) correctly returned
+  404 "Netnaija doesn't have this title" instead of a wrong film.
+- Local proxy range request for a Netnaija MP4 returned HTTP 206 with
+  video/mp4 and a valid Content-Range.
+- node --check server/index.js passes.
+- npm run build succeeds.
+- :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.

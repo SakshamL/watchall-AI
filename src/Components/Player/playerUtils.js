@@ -63,6 +63,7 @@ export const alternateServerId = "Vidnest";
 
 export function serverDisplayName(name) {
   if (name === alternateServerId) return "Server List 2";
+  if (name === "Netnaija") return "Server List 3";
   return name;
 }
 

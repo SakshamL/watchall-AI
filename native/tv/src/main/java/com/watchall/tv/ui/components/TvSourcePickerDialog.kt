@@ -95,7 +95,7 @@ fun TvSourcePickerDialog(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = if (mediaType == MediaType.TV) {
-                        "TV shows play from Server List 1. Server List 2 is for movies only."
+                        "Server List 2 is for movies only. Server List 1 and Server List 3 play TV shows."
                     } else {
                         "Pick where WatchAll should look for this stream."
                     },
@@ -110,7 +110,7 @@ fun TvSourcePickerDialog(
                     val subtitle = when {
                         !enabled -> "Movies only · not available for TV shows"
                         source == SourceList.SERVER_ONE -> "Recommended · movies and TV shows"
-                        source == SourceList.SERVER_THREE -> "VidSrc · embed player"
+                        source == SourceList.SERVER_THREE -> "Netnaija · movies and TV shows"
                         else -> "Alternative · movies only · can be slower"
                     }
                     TvFocusable(

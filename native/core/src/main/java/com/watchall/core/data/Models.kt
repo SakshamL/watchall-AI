@@ -21,13 +21,20 @@ enum class SourceList(
 ) {
     SERVER_ONE("viduki", "Server List 1", "Recommended", true),
     SERVER_TWO("vidnest", "Server List 2", "Alternative", false),
-    SERVER_THREE("vidsrc", "Server List 3", "VidSrc (embed)", true);
+    SERVER_THREE("netnaija", "Server List 3", "Netnaija · movies & TV", true);
 
     companion object {
         fun fromApi(value: String?): SourceList =
-            when (value) {
+            when (value?.lowercase()) {
                 SERVER_TWO.apiId -> SERVER_TWO
-                SERVER_THREE.apiId -> SERVER_THREE
+                SERVER_THREE.apiId,
+                "server3",
+                "3",
+                "4",
+                "vidsrc",
+                "consumet",
+                "flixhq",
+                -> SERVER_THREE
                 else -> SERVER_ONE
             }
 

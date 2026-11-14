@@ -161,7 +161,7 @@ class PlayerViewModel(
             switchList(SourceList.SERVER_TWO)
             return
         }
-        if (name.equals("VidSrc", ignoreCase = true)) {
+        if (name.equals("Netnaija", ignoreCase = true) || name.equals("VidSrc", ignoreCase = true)) {
             switchList(SourceList.SERVER_THREE)
             return
         }
@@ -287,7 +287,7 @@ class PlayerViewModel(
     private fun loadingMessage(source: SourceList, server: String?): String {
         return when {
             source == SourceList.SERVER_TWO -> "Trying Server List 2…"
-            source == SourceList.SERVER_THREE -> "Trying Server List 3…"
+            source == SourceList.SERVER_THREE -> "Matching this title on Netnaija…"
             !server.isNullOrBlank() -> "Opening ${UiText.sourceName(serverLabel(server))}…"
             else -> "Finding your stream…"
         }
@@ -324,7 +324,7 @@ class PlayerViewModel(
                 )
                 val active = when {
                     nextSource == SourceList.SERVER_TWO -> "Vidnest"
-                    nextSource == SourceList.SERVER_THREE -> "VidSrc"
+                    nextSource == SourceList.SERVER_THREE -> "Netnaija"
                     !stream.server.isNullOrBlank() -> stream.server
                     else -> server
                 }
