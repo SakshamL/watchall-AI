@@ -1659,6 +1659,33 @@ How it was verified:
 
 ---
 
+Date: 2026-11-15
+Area: Web app - movie and TV details pages
+
+Issue/Feature:
+The redesigned movie and TV details pages did not look good on any screen size, so the
+change was reverted to the original details-page UI.
+
+What changed and how it works now:
+- src/Pages/Movies.jsx, src/Pages/TVShows.jsx and src/Components/CastCard.jsx were
+  restored to their original versions (commit f542c37). The movie details page uses
+  its original layout again and the TV details page is back to its original
+  (commented-out) state.
+- The supporting web changes for TV playback routes, TMDB TV helpers and the shared
+  player handling remain in place but are no longer used by the restored pages.
+
+Files affected:
+src/Pages/Movies.jsx
+src/Pages/TVShows.jsx
+src/Components/CastCard.jsx
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- npm run build succeeds.
+- Branch is in sync with origin/main.
+
+---
+
 Date: 2026-11-14
 Area: Web app - movie details responsive design and TV show details page
 
