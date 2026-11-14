@@ -1627,3 +1627,32 @@ How it was verified:
 - node --check server/index.js passes.
 - npm run build succeeds.
 - :tv:assembleRelease and :mobile:assembleRelease finished BUILD SUCCESSFUL.
+
+---
+
+Date: 2026-11-14
+Area: Stream extraction - Server List 1 (Viduki) on Vercel
+
+Issue or feature:
+Server List 1 stopped working on the deployed app: every request returned
+HTTP 500 in under a second. A temporary diagnostic endpoint showed the hosted
+server could not load the "puppeteer" package, so it could not connect to the
+Browserless browser service.
+
+What changed and how it works now:
+- The Browserless connection now imports "puppeteer-core", which is listed in
+  package.json and is therefore installed in the Vercel bundle.
+- Local development still uses puppeteer-extra with the full puppeteer install
+  in server/node_modules, so local extraction behaves as before.
+- The temporary diagnostic endpoint was removed after the fix.
+
+Files affected:
+server/index.js
+docs/IMPLEMENTATION_LOG.txt
+
+How it was verified:
+- Live diagnostic reported "connect: ok" to Browserless from Vercel.
+- Live Server List 1 returned HTTP 200 with an HLS stream for Fight Club and
+  for Game of Thrones (TV, season 1 episode 1).
+- Live Server List 2 returned HTTP 200 for Fight Club and Pathaan.
+- Live Server List 3 returned HTTP 200 for Teen Wolf (TV).
